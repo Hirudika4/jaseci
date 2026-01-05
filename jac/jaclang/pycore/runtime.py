@@ -1649,7 +1649,7 @@ class JacByLLM:
             4) If none fit: output [] for multiple-mode, or -1 for single-mode (only if supported).
 
             Example:
-            reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2]
+            reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2].
             If incl_info.stage="before_play" and nodes: 0 Play, 1 Bath => 0 (later stage="after_play" => 1)
 
             """
