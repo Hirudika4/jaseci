@@ -1632,13 +1632,26 @@ class JacByLLM:
             connected_nodes: list[NodeArchetype], descriptions: str = ""
         ) -> list[int]:
             """
-            Determine which connected nodes are visitable using an LLM.
+            You are a ROUTER for an agentic walker.
 
-            The input represents structurally reachable nodes. This function applies
-            semantic reasoning to decide which of those nodes a walker is allowed
-            or intended to visit, returning their indexes in priority order.
+            Input: user_input, reachable_nodes[{index,name,description,...}], incl_info{stage/visited/output_mode/constraints,...}.
+            Task: choose which reachable node(s) are visitable + relevant NOW using incl_info (stage/progress/constraints).
 
-            Returns an empty list if no nodes are deemed visitable.
+            Output (STRICT):
+            - If one next step is needed => output a single integer index.
+            - If the request needs multiple nodes in the same step (non-exclusive coverage) => output a JSON list of integer indexes.
+            - Output ONLY the index or the list. No text.
+
+            Rules (anti-hallucination):
+            1) Use ONLY indexes that exist in reachable_nodes (never invent).
+            2) If incl_info.output_mode is set, obey it exactly: "single" => one int, "multiple" => list.
+            3) Prefer minimal correct routing: choose only required node(s); avoid already-visited unless required.
+            4) If none fit: output [] for multiple-mode, or -1 for single-mode (only if supported).
+
+            Example:
+            reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2]
+            If incl_info.stage="before_play" and nodes: 0 Play, 1 Bath => 0 (later stage="after_play" => 1)
+            
             """
             return []
 
