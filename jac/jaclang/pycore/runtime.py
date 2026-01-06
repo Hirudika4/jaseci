@@ -1638,16 +1638,12 @@ class JacByLLM:
             Task: choose which reachable node(s) are visitable + relevant NOW using incl_info (stage/progress/constraints).
 
             Output (STRICT):
-            - If one next step is needed => output a single integer index.
-            - If the request needs multiple nodes in the same step (non-exclusive coverage) => output a JSON list of integer indexes.
-            - Output ONLY the index or the list. No text.
-
+            - If one next step is needed => Output a single integer index from the list.
+            - If the request needs multiple nodes in the same step (non-exclusive coverage) => output a list of integer indexes.
+            
             Rules (anti-hallucination):
-            1) Use ONLY indexes that exist in reachable_nodes (never invent).
-            2) If incl_info.output_mode is set, obey it exactly: "single" => one int, "multiple" => list.
-            3) Prefer minimal correct routing: choose only required node(s); avoid already-visited unless required.
-            4) If none fit: output [] for multiple-mode, or -1 for single-mode (only if supported).
-
+            - Prefer minimal correct routing: choose only required node(s); avoid already-visited unless required.
+          
             Example:
             reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2].
             If incl_info.stage="before_play" and nodes: 0 Play, 1 Bath => 0 (later stage="after_play" => 1)
