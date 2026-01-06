@@ -1640,10 +1640,10 @@ class JacByLLM:
             Output (STRICT):
             - If one next step is needed => Output a single integer index from the list.
             - If the request needs multiple nodes in the same step (non-exclusive coverage) => output a list of integer indexes.
-            
+
             Rules (anti-hallucination):
             - Prefer minimal correct routing: choose only required node(s); avoid already-visited unless required.
-          
+
             Example:
             reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2].
             If incl_info.stage="before_play" and nodes: 0 Play, 1 Bath => 0 (later stage="after_play" => 1)
