@@ -1652,7 +1652,6 @@ class JacByLLM:
                 ),
             },
         )
-        
         def _filter_visitable_by(
             connected_nodes: list[NodeArchetype], descriptions: str = ""
         ) -> list[int]:
