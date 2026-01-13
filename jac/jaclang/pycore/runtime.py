@@ -1623,36 +1623,44 @@ class JacByLLM:
     def filter_visitable_by(
         connected_nodes: list[NodeArchetype], model: object, descriptions: str = ""
     ) -> list[NodeArchetype]:
+        """
+        Select visitable nodes from a set of structurally connected nodes
+        using semantic evaluation.
+        """
         from .helpers import _describe_nodes_list
 
         visitable_list: list = []
 
         @JacByLLM.by(model=model)
+        @JacRuntime.sem(
+            semstr="Semantic router for determining visitable connected nodes.",
+            inner_semstr={
+                "role": (
+                    "Acts as a router that selects which connected nodes are appropriate to visit at the current step. "
+                ),
+                "inputs": (
+                    "Evaluates the current request and the set of reachable nodes."
+                ),
+                "decision_criteria": (
+                    "Determine relevance of nodes based on current context and intent."
+                ),
+                "selection_policy": (
+                    "Prefer minimal, sufficient selections and avoid unnecessary revisits."
+                ),
+                "output": (
+                    "Return integer index or indexes corresponding to selected nodes."
+                ),
+            },
+        )
+        
         def _filter_visitable_by(
             connected_nodes: list[NodeArchetype], descriptions: str = ""
         ) -> list[int]:
-            """
-            You are a ROUTER for an agentic walker.
-
-            Input: user_input, reachable_nodes[{index,name,description,...}], incl_info{stage/visited/output_mode/constraints,...}.
-            Task: choose which reachable node(s) are visitable + relevant NOW using incl_info (stage/progress/constraints).
-
-            Output (STRICT):
-            - If one next step is needed => Output a single integer index from the list.
-            - If the request needs multiple nodes in the same step (non-exclusive coverage) => output a list of integer indexes.
-
-            Rules (anti-hallucination):
-            - Prefer minimal correct routing: choose only required node(s); avoid already-visited unless required.
-
-            Example:
-            reachable_nodes: 0 Boys_A, 1 Girls_A, 2 Boys_B, 3 Girls_B; user_input:"boys names" => [0,2].
-            If incl_info.stage="before_play" and nodes: 0 Play, 1 Bath => 0 (later stage="after_play" => 1)
-
-            """
             return []
 
         descriptions = _describe_nodes_list(connected_nodes)
         indexes = _filter_visitable_by(connected_nodes, descriptions)
+
         for idx in indexes:
             visitable_list.append(connected_nodes[idx])
 
