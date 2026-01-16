@@ -1883,7 +1883,7 @@ class JacByLLM:
                     "Natural-language descriptions of the reachable nodes used for semantic evaluation."
                 ),
             },
-        )        
+        )
         def _filter_visitable_by(
             connected_nodes: list[NodeArchetype],
             descriptions: str = "",
