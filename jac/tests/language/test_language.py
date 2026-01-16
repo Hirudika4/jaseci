@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from jaclang import JacRuntime as Jac
-from jaclang.cli import cli
+from jaclang.cli.commands import execution, transform  # type: ignore[attr-defined]
 from jaclang.pycore.program import JacProgram
 from jaclang.runtimelib.utils import read_file_with_encoding
 
@@ -21,13 +21,18 @@ from jaclang.runtimelib.utils import read_file_with_encoding
 @pytest.fixture(autouse=True)
 def setup_jac_runtime(
     fixture_path: Callable[[str], str],
+    isolate_jac_context: Path,  # Use tmp_path for database isolation
 ) -> Generator[None, None, None]:
-    """Set up and tear down Jac runtime for each test."""
-    Jac.reset_machine()
-    Jac.set_base_path(fixture_path("./"))
+    """Set up and tear down Jac runtime for each test.
+
+    Note: base_path is passed to reset_machine for database isolation.
+    Tests use explicit base_path in jac_import for module resolution.
+    """
+    # Pass tmp_path to reset_machine so context is created with isolated db path
+    Jac.reset_machine(base_path=str(isolate_jac_context))
     Jac.attach_program(JacProgram())
     yield
-    Jac.reset_machine()
+    Jac.reset_machine(base_path=str(isolate_jac_context))
 
 
 def test_sub_abilities(
@@ -36,7 +41,7 @@ def test_sub_abilities(
 ) -> None:
     """Basic test for pass."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("sub_abil_sep.jac"))
+        execution.run(fixture_path("sub_abil_sep.jac"))
 
     stdout_value = captured_output.getvalue()
 
@@ -50,7 +55,7 @@ def test_sub_abilities_multi(
 ) -> None:
     """Basic test for pass."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("sub_abil_sep_multilev.jac"))  # type: ignore
+        execution.run(fixture_path("sub_abil_sep_multilev.jac"))  # type: ignore
 
     stdout_value = captured_output.getvalue()
 
@@ -337,7 +342,7 @@ def test_deep_imports_interp_mode(
         if "deep_import_interp" in mod_name:
             del sys.modules[mod_name]
     # Delete bytecode cache files to force recompilation
-    cache_dir = Path.cwd() / ".jaccache"
+    cache_dir = Path.cwd() / ".jac" / "cache"
     if cache_dir.exists():
         for cache_file in cache_dir.glob("deep_import_interp*.jbc"):
             cache_file.unlink()
@@ -405,7 +410,7 @@ def test_deep_outer_imports_from_loc(
     """Parse micro jac file."""
     with capture_stdout() as captured_output:
         os.chdir(fixture_path("./deep/deeper/"))
-        cli.run("deep_outer_import.jac")
+        execution.run("deep_outer_import.jac")
     stdout_value = captured_output.getvalue()
     assert "one level deeperslHello World!" in stdout_value
     assert (
@@ -599,12 +604,12 @@ def test_pyfunc_1(fixture_path: Callable[[str], str]) -> None:
             ),
             prog=JacProgram(),
         ).ir_out.unparse()
-    assert "def greet2( **kwargs: Any) {" in output
+    assert "def greet2(**kwargs: Any) -> None {" in output
     assert output.count("with entry {") == 14
     assert "assert (x == 5) , 'x should be equal to 5';" in output
     assert "if not (x == y) {" in output
     assert "squares_dict = {x: (x ** 2) for x in numbers};" in output
-    assert '\n\n"""Say hello"""\n@my_decorator\n\n def say_hello() {' in output
+    assert '\n"""Say hello"""\n@my_decorator\n\n def say_hello() -> object {' in output
 
 
 def test_pyfunc_2(fixture_path: Callable[[str], str]) -> None:
@@ -694,7 +699,7 @@ def test_py2jac_params(fixture_path: Callable[[str], str]) -> None:
             prog=JacProgram(),
         ).ir_out.unparse()
     assert (
-        "def isinstance( <>obj: object , class_or_tuple: _ClassInfo , /)  -> bool {"
+        "def isinstance(<>obj: object, class_or_tuple: _ClassInfo, /) -> bool {"
         in output
     )
     assert (
@@ -1070,31 +1075,28 @@ def test_list_methods(
 def test_walker_dynamic_update(
     fixture_path: Callable[[str], str],
     capture_stdout: Callable[[], AbstractContextManager[io.StringIO]],
+    isolate_jac_context: Path,
 ) -> None:
     """Test dynamic update of a walker during runtime."""
-    Jac.reset_machine()
-    Jac.set_base_path(fixture_path("."))
+    Jac.reset_machine(base_path=str(isolate_jac_context))
     sys.modules.pop("bar", None)
-    session = fixture_path("bar_walk.session")
     bar_file_path = fixture_path("bar.jac")
     update_file_path = fixture_path("walker_update.jac")
     with capture_stdout() as captured_output:
-        cli.enter(
+        execution.enter(
             filename=bar_file_path,
-            session=session,
             entrypoint="bar_walk",
             args=[],
         )
     stdout_value = captured_output.getvalue()
-    os.remove(session) if os.path.exists(session) else None
     expected_output = "Created 5 items."
     assert expected_output in stdout_value.split("\n")
-    # Define the new behavior to be added
+    # Define the new behavior to be added (using entry since exits are deferred
+    # and won't run when disengage is called during child traversal)
     new_behavior = """
     # New behavior added during runtime
-    can end with `root exit {
+    can announce with `root entry {
         "bar_walk has been updated with new behavior!" |> print;
-        disengage;
         }
     }
     """
@@ -1115,8 +1117,8 @@ def test_walker_dynamic_update(
 
     with capture_stdout() as captured_output:
         try:
-            Jac.reset_machine()
-            cli.run(
+            Jac.reset_machine(base_path=str(isolate_jac_context))
+            execution.run(
                 filename=update_file_path,
             )
             stdout_value = captured_output.getvalue()
@@ -1134,7 +1136,7 @@ def test_dynamic_spawn_archetype(
 ) -> None:
     """Test that the walker and node can be spawned and behaves as expected."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("dynamic_archetype.jac"))
+        execution.run(fixture_path("dynamic_archetype.jac"))
 
     output = captured_output.getvalue().strip()
     output_lines = output.split("\n")
@@ -1172,7 +1174,7 @@ def test_dynamic_archetype_creation(
 ) -> None:
     """Test that the walker and node can be created dynamically."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("create_dynamic_archetype.jac"))
+        execution.run(fixture_path("create_dynamic_archetype.jac"))
 
     output = captured_output.getvalue().strip()
     # Expected outputs for spawned entities
@@ -1190,7 +1192,7 @@ def test_dynamic_archetype_creation_rel_import(
 ) -> None:
     """Test that the walker and node can be created dynamically, with relative import."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("arch_rel_import_creation.jac"))
+        execution.run(fixture_path("arch_rel_import_creation.jac"))
 
     output = captured_output.getvalue().strip().splitlines()
     # Expected outputs for spawned entities
@@ -1206,7 +1208,7 @@ def test_object_ref_interface(
 ) -> None:
     """Test class method output."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("objref.jac"))
+        execution.run(fixture_path("objref.jac"))
     stdout_value = captured_output.getvalue().split("\n")
     assert len(stdout_value[0]) == 32
     assert stdout_value[1] == "MyNode(value=0)"
@@ -1277,14 +1279,21 @@ def test_visit_sequence(
     fixture_path: Callable[[str], str],
     capture_stdout: Callable[[], AbstractContextManager[io.StringIO]],
 ) -> None:
-    """Test conn assign on edges."""
+    """Test conn assign on edges.
+
+    With DFS post-order semantics:
+    - Entries execute depth-first: a, b, c
+    - Exits execute in reverse (LIFO): c, b, a
+    """
     with capture_stdout() as captured_output:
         Jac.jac_import("visit_sequence", base_path=fixture_path("./"))
     assert (
         captured_output.getvalue() == "walker entry\nwalker enter to root\n"
-        "a-1\na-2\na-3\na-4\na-5\na-6\n"
-        "b-1\nb-2\nb-3\nb-4\nb-5\nb-6\n"
+        "a-1\na-2\na-3\n"
+        "b-1\nb-2\nb-3\n"
         "c-1\nc-2\nc-3\nc-4\nc-5\nc-6\n"
+        "b-4\nb-5\nb-6\n"
+        "a-4\na-5\na-6\n"
         "walker exit\n"
     )
 
@@ -1387,7 +1396,7 @@ def test_import_from_jacpath(
             original_cwd = os.getcwd()
             os.chdir(script_dir)
             try:
-                cli.run("importer.jac")
+                execution.run("importer.jac")
             finally:
                 os.chdir(original_cwd)
                 # Clean up environment variable
@@ -1556,11 +1565,12 @@ def test_here_visitor_error(fixture_path: Callable[[str], str]) -> None:
     captured_output = io.StringIO()
     sys.stdout = captured_output
     sys.stderr = captured_output
-    with pytest.raises(SystemExit) as cm:
-        cli.run(fixture_path("here_usage_error.jac"))
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-    assert cm.value.code == 1
+    try:
+        result = execution.run(fixture_path("here_usage_error.jac"))
+    finally:
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+    assert result == 1
     stdout_value = captured_output.getvalue()
     assert "'here' is not defined" in stdout_value
 
@@ -1569,14 +1579,21 @@ def test_edge_ability(
     fixture_path: Callable[[str], str],
     capture_stdout: Callable[[], AbstractContextManager[io.StringIO]],
 ) -> None:
-    """Test visitor, here keyword usage in jaclang."""
+    """Test visitor, here keyword usage in jaclang.
+
+    With DFS post-order semantics, entries happen depth-first and exits in reverse.
+    """
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("edge_ability.jac"))
+        execution.run(fixture_path("edge_ability.jac"))
     stdout_value = captured_output.getvalue().split("\n")
+    # Walker entry on edge (path=1)
     assert "MyEdge from walker MyEdge(path=1)" in stdout_value[0]
+    # Edge entry with walker trigger
     assert "MyWalker from edge MyWalker()" in stdout_value[1]
-    assert "MyWalker from node MyWalker()" in stdout_value[6]
-    assert "MyEdge from walker MyEdge(path=2)" in stdout_value[16]
+    # Node entry with walker trigger (first node val=10)
+    assert "MyWalker from node MyWalker()" in stdout_value[3]
+    # Walker entry on edge (path=2) - happens during DFS into second node
+    assert "MyEdge from walker MyEdge(path=2)" in stdout_value[4]
 
 
 def test_backward_edge_visit(
@@ -1585,7 +1602,7 @@ def test_backward_edge_visit(
 ) -> None:
     """Test backward edge visit in jaclang."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("backward_edge_visit.jac"))
+        execution.run(fixture_path("backward_edge_visit.jac"))
     stdout_value = captured_output.getvalue().split("\n")
     assert "MyWalker() from node MyNode(val=0)" in stdout_value[0]
     assert "MyWalker() from edge MyEdge(path=0)" in stdout_value[1]
@@ -1599,7 +1616,7 @@ def test_visit_traversal(
 ) -> None:
     """Test visit traversal semantic in jaclang."""
     with capture_stdout() as captured_output:
-        cli.run(fixture_path("visit_traversal.jac"))
+        execution.run(fixture_path("visit_traversal.jac"))
     stdout_value = captured_output.getvalue().split("\n")
     assert "MyWalker() from node MyNode(val=0)" in stdout_value[0]
     assert "MyWalker() from node MyNode(val=20)" in stdout_value[2]
@@ -1680,15 +1697,18 @@ def test_spawn_loc_list(
     fixture_path: Callable[[str], str],
     capture_stdout: Callable[[], AbstractContextManager[io.StringIO]],
 ) -> None:
-    """Test spawning a walker on list of nodes."""
+    """Test spawning a walker on list of nodes.
+
+    With DFS post-order semantics, the traversal order changes.
+    """
     with capture_stdout() as captured_output:
         Jac.jac_import("spawn_loc_list", base_path=fixture_path("./"))
     stdout_value = captured_output.getvalue().split("\n")
     assert "I am here MyNode(val=5)" in stdout_value[0]
     assert "I am here MyNode(val=15)" in stdout_value[2]
-    assert "I am here MyNode(val=20)" in stdout_value[3]
-    assert "I am here MyEdge(val=100)" in stdout_value[5]
-    assert "I am here MyNode(val=30)" in stdout_value[6]
+    assert "I am here MyNode(val=30)" in stdout_value[3]
+    assert "I am here MyEdge(val=100)" in stdout_value[4]
+    assert "I am here MyNode(val=20)" in stdout_value[6]
 
 
 def test_while_else(
@@ -1812,7 +1832,7 @@ def test_funccall_genexpr(
     # Test py2jac conversion
     py_file_path = f"{fixture_path('funccall_genexpr.py')}"
     with capture_stdout() as captured_output:
-        cli.py2jac(py_file_path)
+        transform.py2jac(py_file_path)
     stdout_value = captured_output.getvalue()
     assert "result = total((x * x) for x in range(5));" in stdout_value
 
@@ -1904,13 +1924,12 @@ def test_by_operator(fixture_path: Callable[[str], str]) -> None:
     captured_output = io.StringIO()
     sys.stdout = captured_output
     sys.stderr = captured_output
-
-    with pytest.raises(SystemExit):
-        cli.run(fixture_path("by_operator.jac"))
-
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-
+    try:
+        result = execution.run(fixture_path("by_operator.jac"))
+    finally:
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+    assert result == 1
     stdout_value = captured_output.getvalue()
     assert "by" in stdout_value.lower()
     assert "not" in stdout_value.lower()

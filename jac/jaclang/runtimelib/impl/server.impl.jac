@@ -1,5 +1,3 @@
-import from jaclang.project.config { get_config }
-
 """Serialize objects to JSON-compatible format."""
 impl JacSerializer.serialize(<>obj: object) -> JsonValue {
     import from jaclang.pycore.constructs { Archetype }
@@ -53,7 +51,9 @@ impl JacSerializer._serialize_archetype(arch: Archetype) -> dict[str, JsonValue]
 }
 
 impl UserManager.postinit -> None {
-    self._db_path = f"{self.session_path}.users.json";
+    data_dir = os.path.join(self.base_path, ".jac", "data");
+    os.makedirs(data_dir, exist_ok=True);
+    self._db_path = os.path.join(data_dir, "users.json");
     self._load_db();
 }
 
@@ -83,18 +83,13 @@ impl UserManager.create_user(username: str, password: str) -> dict[str, str] {
     if (username in self._users) {
         return {'error': 'User already exists'};
     }
-    ctx = Jac.create_j_context(session=self.session_path);
-    Jac.set_context(ctx);
-    try {
-        user_root = Root();
-        root_anchor = user_root.__jac__;
-        Jac.save(root_anchor);
-        Jac.commit(root_anchor);
-        root_id = root_anchor.id.hex;
-    } finally {
-        ctx.mem.close();
-        Jac.set_context(Jac.create_j_context());
-    }
+    # Use existing context instead of creating new one (avoids shelf locking issues)
+    ctx = Jac.get_context();
+    user_root = Root();
+    root_anchor = user_root.__jac__;
+    Jac.save(root_anchor);
+    Jac.commit(root_anchor);
+    root_id = root_anchor.id.hex;
     token = secrets.token_urlsafe(32);
     password_hash = hashlib.sha256(password.encode()).hexdigest();
     self._users[username] = {
@@ -158,8 +153,10 @@ impl ExecutionManager.execute_function(
     if not root_id {
         return {'error': 'User not found'};
     }
-    ctx = Jac.create_j_context(session=self.session_path, <>root=root_id);
-    Jac.set_context(ctx);
+    # Set user context for permission checks and ownership
+    ctx = Jac.get_context();
+    ctx.set_user_root(root_id);
+    ctx.reports = [];  # Clear reports for this request
     try {
         result = func(**args);
         Jac.commit();
@@ -169,9 +166,6 @@ impl ExecutionManager.execute_function(
         };
     } except Exception as e {
         return {'error': str(e)};
-    } finally {
-        ctx.mem.close();
-        Jac.set_context(Jac.create_j_context());
     }
 }
 
@@ -185,8 +179,10 @@ impl ExecutionManager.spawn_walker(
         return {'error': 'User not found'};
     }
     target_node_id = fields.pop('_jac_spawn_node', None);
-    ctx = Jac.create_j_context(session=self.session_path, <>root=root_id);
-    Jac.set_context(ctx);
+    # Set user context for permission checks and ownership
+    ctx = Jac.get_context();
+    ctx.set_user_root(root_id);
+    ctx.reports = [];  # Clear reports for this request
     try {
         <>walker = walker_cls(**fields);
         if target_node_id {
@@ -198,6 +194,7 @@ impl ExecutionManager.spawn_walker(
             target_node = ctx.get_root();
         }
         Jac.spawn(<>walker, target_node);
+        Jac.commit();  # Persist changes
         return {
             'result': JacSerializer.serialize(<>walker),
             'reports': JacSerializer.serialize(ctx.reports)
@@ -205,9 +202,6 @@ impl ExecutionManager.spawn_walker(
     } except Exception as e {
         import traceback;
         return {'error': str(e), 'traceback': traceback.format_exc()};
-    } finally {
-        ctx.mem.close();
-        Jac.set_context(Jac.create_j_context());
     }
 }
 
@@ -311,11 +305,7 @@ impl ModuleIntrospector._collect_functions -> dict[str, Callable[(..., Any)]] {
     functions: dict[(str, Callable[(..., Any)])] = {};
     export_names = <>set(self._client_manifest.get('exports', []));
     for (name, <>obj) in inspect.getmembers(self._module) {
-        if (
-            inspect.isfunction(<>obj)
-            and not name.startswith('_')
-            and (<>obj.__module__ == self._module.__name__)
-        ) {
+        if (inspect.isfunction(<>obj) and not name.startswith('_')) {
             functions[name] = <>obj;
             if (name in export_names) {
                 self._client_functions[name] = <>obj;
@@ -345,7 +335,6 @@ impl ModuleIntrospector._collect_walkers -> dict[str, type[WalkerArchetype]] {
             isinstance(<>obj, <>type)
             and issubclass(<>obj, WalkerArchetype)
             and (<>obj is not WalkerArchetype)
-            and (<>obj.__module__ == self._module.__name__)
         ) {
             walkers[name] = <>obj;
         }
@@ -353,10 +342,38 @@ impl ModuleIntrospector._collect_walkers -> dict[str, type[WalkerArchetype]] {
     return walkers;
 }
 
+"""Check if the module has been reloaded (e.g., by HMR) and refresh if needed."""
+impl ModuleIntrospector._check_module_freshness -> None {
+    if not self._module {
+        return;
+    }
+    # Check if any cached walker class is stale (different from what's in the module)
+    # This handles the case where importlib.reload() updates the module in place
+    needs_refresh = False;
+    for (name, cached_cls) in self._walkers.items() {
+        current_cls = getattr(self._module, name, None);
+        if current_cls is not cached_cls {
+            needs_refresh = True;
+            break;
+        }
+    }
+    if needs_refresh {
+        # Module was reloaded, refresh our caches
+        self._load_manifest();
+        self._extract_access_levels();
+        self._functions = self._collect_functions();
+        self._walkers = self._collect_walkers();
+        self._bundle = None;
+        self._bundle_error = None;
+    }
+}
+
 """Get all functions."""
 impl ModuleIntrospector.get_functions -> dict[str, Callable[(..., Any)]] {
     if not self._functions {
         self.load();
+    } else {
+        self._check_module_freshness();
     }
     return <>dict(self._functions);
 }
@@ -365,6 +382,8 @@ impl ModuleIntrospector.get_functions -> dict[str, Callable[(..., Any)]] {
 impl ModuleIntrospector.get_walkers -> dict[str, type[WalkerArchetype]] {
     if not self._walkers {
         self.load();
+    } else {
+        self._check_module_freshness();
     }
     return <>dict(self._walkers);
 }
@@ -444,14 +463,18 @@ impl ModuleIntrospector.ensure_bundle -> str {
     if self._bundle {
         return self._bundle.hash;
     }
+    # Don't retry if we already have a cached error
+    if self._bundle_error {
+        raise ClientBundleError(self._bundle_error) ;
+    }
     try {
         self._bundle = self._bundle_builder.build(self._module);
         self._bundle_error = None;
         return self._bundle.hash;
-    } except ClientBundleError as exc {
+    } except Exception as exc {
         self._bundle = None;
         self._bundle_error = str(exc);
-        raise exc from RuntimeError(self._bundle_error) ;
+        raise ClientBundleError(self._bundle_error) ;
     }
 }
 
@@ -459,32 +482,7 @@ impl ModuleIntrospector.ensure_bundle -> str {
 impl ModuleIntrospector.render_page(
     function_name: str, args: dict[(str, Any)], username: str
 ) -> dict[str, Any] {
-    self.load();
-    available_exports = (
-        <>set(self._client_manifest.get('exports', []))
-        or <>set(self.get_client_functions().keys())
-    );
-    if (function_name not in available_exports) {
-        raise ValueError(f"Client function '{function_name}' not found") ;
-    }
-    bundle_hash = self.ensure_bundle();
-    arg_order = <>list(self._client_manifest.get('params', {}).get(function_name, []));
-    globals_payload = {
-        name: JacSerializer.serialize(value)
-        for (name, value) in self._collect_client_globals().items()
-    };
-    initial_state = {
-        'module': self._module.__name__ if self._module else self.module_name,
-        'function': function_name,
-        'args': {key: JacSerializer.serialize(value) for (key, value) in args.items()},
-        'globals': globals_payload,
-        'argOrder': arg_order
-    };
-    safe_initial_json = json.dumps(initial_state).replace('</', '<\\/');
-    page = f'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>{html.escape(
-        function_name
-    )}</title></head><body><div id="__jac_root"></div><script id="__jac_init__" type="application/json">{safe_initial_json}</script><script src="/static/client.js?hash={bundle_hash}" defer></script></body></html>';
-    return {'html': page, 'bundle_hash': bundle_hash, 'bundle_code': self._bundle.code};
+    return Jac.render_page(self, function_name, args, username);
 }
 
 """Check if authentication is required for a function based on its access level.
@@ -600,100 +598,146 @@ impl ResponseBuilder._add_custom_headers(handler: BaseHTTPRequestHandler) -> Non
 }
 
 """Create new user."""
-impl AuthHandler.create_user(username: str, password: str) -> Response {
+impl AuthHandler.create_user(username: str, password: str) -> TransportResponse {
     if (not username or not password) {
-        return Response(status=400, body={'error': 'Username and password required'});
+        return TransportResponse.fail(
+            code='VALIDATION_ERROR',
+            message='Username and password required',
+            meta=Meta(extra={'http_status': 400})
+        );
     }
     result = self.user_manager.create_user(username, password);
     if ('error' in result) {
-        return Response(status=400, body=result);
+        return TransportResponse.fail(
+            code='USER_EXISTS',
+            message=result.get('error', 'User creation failed'),
+            meta=Meta(extra={'http_status': 400})
+        );
     }
-    return Response(status=201, body=result);
+    return TransportResponse.success(
+        data=result, meta=Meta(extra={'http_status': 201})
+    );
 }
 
 """Authenticate user."""
-impl AuthHandler.login(username: str, password: str) -> Response {
+impl AuthHandler.login(username: str, password: str) -> TransportResponse {
     if (not username or not password) {
-        return Response(status=400, body={'error': 'Username and password required'});
+        return TransportResponse.fail(
+            code='VALIDATION_ERROR',
+            message='Username and password required',
+            meta=Meta(extra={'http_status': 400})
+        );
     }
     result = self.user_manager.authenticate(username, password);
     if not result {
-        return Response(status=401, body={'error': 'Invalid credentials'});
+        return TransportResponse.fail(
+            code='UNAUTHORIZED',
+            message='Invalid credentials',
+            meta=Meta(extra={'http_status': 401})
+        );
     }
-    return Response(status=200, body=result);
+    return TransportResponse.success(
+        data=result, meta=Meta(extra={'http_status': 200})
+    );
 }
 
 """List all functions."""
-impl IntrospectionHandler.list_functions -> Response {
+impl IntrospectionHandler.list_functions -> TransportResponse {
     self.introspector.load();
-    return Response(
-        status=200,
-        body={'functions': <>list(self.introspector.get_functions().keys())}
+    return TransportResponse.success(
+        data={'functions': <>list(self.introspector.get_functions().keys())},
+        meta=Meta(extra={'http_status': 200})
     );
 }
 
 """List all walkers."""
-impl IntrospectionHandler.list_walkers -> Response {
+impl IntrospectionHandler.list_walkers -> TransportResponse {
     self.introspector.load();
-    return Response(
-        status=200, body={'walkers': <>list(self.introspector.get_walkers().keys())}
+    return TransportResponse.success(
+        data={'walkers': <>list(self.introspector.get_walkers().keys())},
+        meta=Meta(extra={'http_status': 200})
     );
 }
 
 """Get function signature."""
-impl IntrospectionHandler.get_function_info(name: str) -> Response {
+impl IntrospectionHandler.get_function_info(name: str) -> TransportResponse {
     self.introspector.load();
     functions = self.introspector.get_functions();
     if (name not in functions) {
-        return Response(status=404, body={'error': f"Function '{name}' not found"});
+        return TransportResponse.fail(
+            code='NOT_FOUND',
+            message=f"Function '{name}' not found",
+            meta=Meta(extra={'http_status': 404})
+        );
     }
     signature = self.introspector.introspect_callable(functions[name]);
-    return Response(status=200, body={'name': name, 'signature': signature});
+    return TransportResponse.success(
+        data={'name': name, 'signature': signature},
+        meta=Meta(extra={'http_status': 200})
+    );
 }
 
 """Get walker info."""
-impl IntrospectionHandler.get_walker_info(name: str) -> Response {
+impl IntrospectionHandler.get_walker_info(name: str) -> TransportResponse {
     self.introspector.load();
     walkers = self.introspector.get_walkers();
     if (name not in walkers) {
-        return Response(status=404, body={'error': f"Walker '{name}' not found"});
+        return TransportResponse.fail(
+            code='NOT_FOUND',
+            message=f"Walker '{name}' not found",
+            meta=Meta(extra={'http_status': 404})
+        );
     }
     info = self.introspector.introspect_walker(walkers[name]);
-    return Response(status=200, body={'name': name, 'info': info});
+    return TransportResponse.success(
+        data={'name': name, 'info': info}, meta=Meta(extra={'http_status': 200})
+    );
 }
 
 """Call a function."""
 impl ExecutionHandler.call_function(
     name: str, args: dict[(str, Any)], username: str
-) -> Response {
+) -> TransportResponse {
     self.introspector.load();
     functions = self.introspector.get_functions();
     if (name not in functions) {
-        return Response(status=404, body={'error': f"Function '{name}' not found"});
+        return TransportResponse.fail(
+            code='NOT_FOUND',
+            message=f"Function '{name}' not found",
+            meta=Meta(extra={'http_status': 404})
+        );
     }
     result = self.execution_manager.execute_function(functions[name], args, username);
-    return Response(status=200, body=result);
+    return TransportResponse.success(
+        data=result, meta=Meta(extra={'http_status': 200})
+    );
 }
 
 """Spawn a walker."""
 impl ExecutionHandler.spawn_walker(
     name: str, fields: dict[(str, Any)], username: str
-) -> Response {
+) -> TransportResponse {
     self.introspector.load();
     walkers = self.introspector.get_walkers();
     if (name not in walkers) {
-        return Response(status=404, body={'error': f"Walker '{name}' not found"});
+        return TransportResponse.fail(
+            code='NOT_FOUND',
+            message=f"Walker '{name}' not found",
+            meta=Meta(extra={'http_status': 404})
+        );
     }
     result = self.execution_manager.spawn_walker(walkers[name], fields, username);
-    return Response(status=200, body=result);
+    return TransportResponse.success(
+        data=result, meta=Meta(extra={'http_status': 200})
+    );
 }
 
 """Initialize the API server."""
 impl JacAPIServer.postinit -> None {
-    self.user_manager = UserManager(session_path=self.session_path);
-    self.introspector = Jac.get_module_introspector(self.module_name, self.base_path);
+    self.user_manager = UserManager(base_path=self.base_path);
+    self.introspector = ModuleIntrospector(self.module_name, self.base_path);
     self.execution_manager = ExecutionManager(
-        session_path=self.session_path, user_manager=self.user_manager
+        base_path=self.base_path, user_manager=self.user_manager
     );
     self.auth_handler = AuthHandler(
         introspector=self.introspector,
@@ -710,6 +754,7 @@ impl JacAPIServer.postinit -> None {
         execution_manager=self.execution_manager,
         user_manager=self.user_manager
     );
+    self.server = Jac.create_server(self, '0.0.0.0', self.port);
 }
 
 """Create HTTP request handler."""
@@ -740,9 +785,20 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
             return json.loads(body);
         }
 
-        """Send response to client."""
-        def _send_response(self: JacRequestHandler, response: Response) -> None {
-            Jac.send_json(self, response.status, response.body);
+        """Send response to client (supports both Response and TransportResponse).
+
+        Uses HTTPTransport to demonstrate transport abstraction layer.
+        """
+        def _send_response(
+            self: JacRequestHandler, response: (Response | TransportResponse)
+        ) -> None {
+            # Handle legacy Response objects for backward compatibility
+            if isinstance(response, Response) {
+                Jac.send_json(self, response.status, response.body);
+            } else {
+                transport = HTTPTransport(handler=self);
+                transport.send(response);
+            }
         }
 
         """Handle OPTIONS requests (CORS preflight)."""
@@ -774,10 +830,12 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
             client_cfg = config.get_plugin_config("client") if config else None;
             assets_config = client_cfg.get("assets", {}) if client_cfg else {};
             custom_asset_extensions = set(assets_config.get("custom_extensions", []));
+            cl_route_prefix = config.serve.cl_route_prefix if config else "cl";
+            cl_route_path = f"/{cl_route_prefix}/";
             is_asset_file = (
                 not is_static_path
                 and (path != '/')
-                and not path.startswith('/page/')
+                and not path.startswith(cl_route_path)
                 and not path.startswith('/function/')
                 and not path.startswith('/walker/')
                 and not path.startswith('/user/')
@@ -879,6 +937,36 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
                 return;
             }
             if (path == '/') {
+                base_route_app = config.serve.base_route_app if config else "";
+                if base_route_app {
+                    # Serve the configured base route app at /
+                    query_params = parse_qs(parsed_path.query, keep_blank_values=True);
+                    args = {
+                        key: values[0] if (len(values) == 1) else values
+                        for (key, values) in query_params.items()
+                        if (key != 'mode')
+                    };
+                    username = self._authenticate();
+                    if not username {
+                        username = '__guest__';
+                        if (username not in server.user_manager._users) {
+                            server.user_manager.create_user(
+                                username, '__no_password__'
+                            );
+                        }
+                    }
+                    try {
+                        render_payload = server.introspector.render_page(
+                            base_route_app, args, username
+                        );
+                        Jac.send_html(self, 200, render_payload['html']);
+                    } except ValueError as exc {
+                        Jac.send_json(self, 404, {'error': str(exc)});
+                    } except RuntimeError as exc {
+                        Jac.send_json(self, 500, {'error': str(exc)});
+                    }
+                    return;
+                }
                 Jac.send_json(
                     self,
                     200,
@@ -893,13 +981,13 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
                             'GET /walker/<name>': 'Get walker fields',
                             'POST /function/<name>': 'Call a function',
                             'POST /walker/<name>': 'Spawn a walker',
-                            'GET /page/<name>': 'Render HTML page for client function'
+                            f'GET /{cl_route_prefix}/<name>': 'Render HTML page for client function'
                         }
                     }
                 );
                 return;
             }
-            if path.startswith('/page/') {
+            if path.startswith(cl_route_path) {
                 func_name = path.split('/')[-1];
                 query_params = parse_qs(parsed_path.query, keep_blank_values=True);
                 args = {
@@ -965,7 +1053,10 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
                     return;
                 }
                 self._send_response(
-                    Response(status=200, body={'message': 'sucessful'})
+                    TransportResponse.success(
+                        data={'message': 'sucessful'},
+                        meta=Meta(extra={'http_status': 200})
+                    )
                 );
             } else {
                 Jac.send_json(self, 404, {'error': 'Not found'});
@@ -1114,11 +1205,32 @@ impl JacAPIServer.print_endpoint_docs -> None {
 """Start the HTTP server."""
 impl JacAPIServer.start -> None {
     self.introspector.load();
-    handler_class = self.create_handler();
-    with HTTPServer(('0.0.0.0', self.port), handler_class) as httpd {
+    # Eagerly build client bundle if there are client exports
+    client_exports = self.introspector._client_manifest.get('exports', []);
+    if client_exports {
+        import time;
+        print("Building client bundle...", flush=True);
+        start_time = time.time();
+        try {
+            self.introspector.ensure_bundle();
+            elapsed = time.time() - start_time;
+            print(f"Client bundle ready ({elapsed:.1f}s).");
+        } except Exception as e {
+            import sys;
+            print(f"\n[ERROR] Failed to build client bundle:", file=sys.stderr);
+            print(f"{e}", file=sys.stderr);
+            print(
+                f"\nClient pages will not be available until this is fixed.\n",
+                file=sys.stderr
+            );
+        }
+    }
+    config = get_config();
+    cl_route_prefix = config.serve.cl_route_prefix if config else "cl";
+    base_route_app = config.serve.base_route_app if config else "";
+    with self.server as httpd {
         print(f"Jac API Server running on http://0.0.0.0:{self.port}");
         print(f"Module: {self.module_name}");
-        print(f"Session: {self.session_path}");
         print('\nAvailable endpoints:');
         print('  POST /user/register - Create a new user');
         print('  POST /user/login - Login and get auth token');
@@ -1128,6 +1240,12 @@ impl JacAPIServer.start -> None {
         print('  GET /walker/<name> - Get walker info');
         print('  POST /function/<name> - Call a function');
         print('  POST /walker/<name> - Spawn a walker');
+        print(
+            f'  GET /{cl_route_prefix}/<name> - Render HTML page for client function'
+        );
+        if base_route_app {
+            print(f'\nBase route (/) configured to serve: {base_route_app}');
+        }
         print('\nPress Ctrl+C to stop the server');
         try {
             httpd.serve_forever();
@@ -1213,6 +1331,9 @@ impl print_endpoint_docs(server: JacAPIServer) -> None {
             );
         }
     }
+    config = get_config();
+    cl_route_prefix = config.serve.cl_route_prefix if config else "cl";
+    base_route_app = config.serve.base_route_app if config else "";
     section('CLIENT PAGES', 'Public');
     if client_exports {
         funcs_list = ', '.join(sorted(client_exports)[:8]);
@@ -1222,9 +1343,9 @@ impl print_endpoint_docs(server: JacAPIServer) -> None {
         print(f"Available ({len(client_exports)}): {funcs_list}");
         endpoint(
             'GET',
-            '/page/<name>',
+            f'/{cl_route_prefix}/<name>',
             'Render HTML for client function',
-            'Example: /page/App?arg1=value1'
+            f'Example: /{cl_route_prefix}/App?arg1=value1'
         );
     } else {
         print(
@@ -1232,7 +1353,11 @@ impl print_endpoint_docs(server: JacAPIServer) -> None {
         );
     }
     section('STATIC');
-    endpoint('GET', '/', 'API information and endpoint list');
+    if base_route_app {
+        endpoint('GET', '/', f'Serves client app: {base_route_app}');
+    } else {
+        endpoint('GET', '/', 'API information and endpoint list');
+    }
     endpoint('GET', '/static/client.js', 'Client JavaScript bundle');
     total = 2 + 2 + (len(functions) * 2) + (len(walkers) * 2) + 2;
     print(('\n' + ('=' * 80)));

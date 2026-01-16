@@ -30,13 +30,6 @@ impl JacClient.send_static_file(
     }
 }
 
-"""Get a module introspector for the supplied module."""
-impl JacClient.get_module_introspector(
-    module_name: str, base_path: (str | None)
-) -> ModuleIntrospector {
-    return JacClientModuleIntrospector(module_name, base_path);
-}
-
 """Build a client bundle for the supplied module."""
 impl JacClient.build_client_bundle(
     module: types.ModuleType, force: bool = False
@@ -92,21 +85,21 @@ impl JacClient.get_client_bundle_builder -> ViteClientBundleBuilder {
 }
 
 """Render HTML page for client function using the Vite bundle."""
-impl JacClientModuleIntrospector.render_page(
-    self: JacClientModuleIntrospector,
+impl JacClient.render_page(
+    introspector: ModuleIntrospector,
     function_name: str,
     args: dict[(str, Any)],
     username: str
 ) -> dict[str, Any] {
-    self.load();
+    introspector.load();
     available_exports = (
-        set(self._client_manifest.get('exports', []))
-        or set(self.get_client_functions().keys())
+        set(introspector._client_manifest.get('exports', []))
+        or set(introspector.get_client_functions().keys())
     );
     if (function_name not in available_exports) {
         raise ValueError(f"Client function '{function_name}' not found") ;
     }
-    bundle_hash = self.ensure_bundle();
+    bundle_hash = introspector.ensure_bundle();
     import from jaclang.project.config { find_project_root, get_config }
     # Find project root by looking for jac.toml (base_path_dir might be src/ for entry files)
     base_path_dir = Path(Jac.base_path_dir);
@@ -125,17 +118,76 @@ impl JacClientModuleIntrospector.render_page(
         dist_dir = base_path / '.jac' / 'client' / 'dist';
     }
     css_link = '';
-    css_file = dist_dir / 'main.css';
+    css_file = dist_dir / 'styles.css';
     if css_file.exists() {
         css_hash = hashlib.sha256(css_file.read_bytes()).hexdigest()[:8];
-        css_link = f'<link rel="stylesheet" href="/static/main.css?hash={css_hash}"/>';
+        css_link = f'<link rel="stylesheet" href="/static/styles.css?hash={css_hash}"/>';
     }
-    head_content = f'<meta charset="utf-8"/>\n            <title>{html.escape(
-        function_name
-    )}</title>';
+    # Get meta data from config
+    client_cfg = config.get_plugin_config("client") if config else None;
+    meta_data = client_cfg.get("app_meta_data", {}) if client_cfg else {};
+    charset = meta_data.get("charset", "UTF-8");
+    title = meta_data.get("title", function_name);
+    viewport = meta_data.get("viewport", "width=device-width, initial-scale=1");
+    description = meta_data.get("description", None);
+    robots = meta_data.get("robots", "index, follow");
+    canonical = meta_data.get("canonical", None);
+    og_type = meta_data.get("og_type", "website");
+    og_title = meta_data.get("og_title", title);
+    og_description = meta_data.get("og_description", None);
+    og_url = meta_data.get("og_url", None);
+    og_image = meta_data.get("og_image", None);
+    theme_color = meta_data.get("theme_color", "#ffffff");
+    icon = meta_data.get("icon", None);
+    # Build head content from TOML metadata
+    head_content = f'<meta charset="{html.escape(charset)}"/>\n            <meta name="viewport" content="{html.escape(
+        viewport
+    )}"/>\n            <title>{html.escape(title)}</title>';
+    head_content += f'\n            <meta name="robots" content="{html.escape(robots)}"/>';
+    head_content += f'\n            <meta name="theme-color" content="{html.escape(
+        theme_color
+    )}"/>';
+    head_content += f'\n            <meta property="og:type" content="{html.escape(
+        og_type
+    )}"/>';
+    head_content += f'\n            <meta property="og:title" content="{html.escape(
+        og_title
+    )}"/>';
+    if description {
+        head_content += f'\n            <meta name="description" content="{html.escape(
+            description
+        )}"/>';
+    }
+    if canonical {
+        head_content += f'\n            <link rel="canonical" href="{html.escape(
+            canonical
+        )}"/>';
+    }
+    if icon {
+        head_content += f'\n            <link rel="icon" href="{html.escape(icon)}"/>';
+    }
+    if og_url {
+        head_content += f'\n            <meta property="og:url" content="{html.escape(
+            og_url
+        )}"/>';
+    }
+    if og_image {
+        head_content += f'\n            <meta property="og:image" content="{html.escape(
+            og_image
+        )}"/>';
+    }
+    if og_description {
+        head_content += f'\n            <meta property="og:description" content="{html.escape(
+            og_description
+        )}"/>';
+    }
     if css_link {
         head_content += f"\n            {css_link}";
     }
     page = f'<!DOCTYPE html><html lang="en"><head>{head_content}</head><body><div id="root"></div><script src="/static/client.js?hash={bundle_hash}" defer></script></body></html>';
-    return {'html': page, 'bundle_hash': bundle_hash, 'bundle_code': self._bundle.code};
+    return {
+        'html': page,
+        'bundle_hash': bundle_hash,
+        'bundle_code': introspector._bundle.code
+    };
 }
