@@ -1876,25 +1876,22 @@ class JacByLLM:
         @JacRuntime.sem(
             semstr="Semantic router for determining visitable connected nodes.",
             inner_semstr={
-                "role": (
-                    "Acts as a router that selects which connected nodes are appropriate to visit at the current step. "
+                "connected_nodes": (
+                    "Structurally reachable nodes that can potentially be visited."
                 ),
-                "inputs": (
-                    "Evaluates the current request and the set of reachable nodes."
-                ),
-                "decision_criteria": (
-                    "Determine relevance of nodes based on current context and intent."
-                ),
-                "selection_policy": (
-                    "Prefer minimal, sufficient selections and avoid unnecessary revisits."
-                ),
-                "output": (
-                    "Return integer index or indexes corresponding to selected nodes."
+                "descriptions": (
+                    "Natural-language descriptions of the reachable nodes used for semantic evaluation."
                 ),
             },
-        )
+        )        
         def _filter_visitable_by(
-            connected_nodes: list[NodeArchetype], descriptions: str = ""
+            connected_nodes: list[NodeArchetype],
+            descriptions: str = "",
+            routing_intent: str = (
+                "Select which reachable nodes are appropriate to visit at the current step. "
+                "Prefer minimal, sufficient selections and avoid unnecessary revisits. "
+                "Return integer index or indexes corresponding to selected nodes."
+            ),
         ) -> list[int]:
             return []
 
