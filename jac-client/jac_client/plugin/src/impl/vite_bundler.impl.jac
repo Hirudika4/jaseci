@@ -78,6 +78,8 @@ impl ViteBundler.create_package_json(
     }
     # Generate tsconfig.json during build time
     self.create_tsconfig();
+    # Generate config files (postcss, tailwind, etc.) from jac.toml
+    self.create_config_files();
     return package_json_path;
 }
 
@@ -375,6 +377,8 @@ impl ViteBundler.find_bundle(self: ViteBundler) -> Optional[Path] {
 
 """Run Vite build with generated config in .jac/client/configs/."""
 impl ViteBundler.build(self: ViteBundler, entry_file: Optional[Path] = None) -> None {
+    import sys;
+    import time;
     self.output_dir.mkdir(parents=True, exist_ok=True);
     generated_package_json = self._get_client_dir() / 'configs' / 'package.json';
     if not generated_package_json.exists() {
@@ -395,18 +399,31 @@ impl ViteBundler.build(self: ViteBundler, entry_file: Optional[Path] = None) -> 
                 shutil.copy2(configs_package_json, build_package_json);
             }
             try {
-                # Install to .jac/client/node_modules
-                subprocess.run(
-                    ['npm', 'install'],
+                # Install to .jac/client/node_modules with progress feedback
+                print(
+                    "  ⏳ Installing npm dependencies (this may take a minute)...",
+                    flush=True
+                );
+                start_time = time.time();
+                result = subprocess.run(
+                    ['npm', 'install', '--progress'],
                     cwd=build_dir,
-                    check=True,
+                    check=False,
                     capture_output=True,
                     text=True
                 );
-            } except subprocess.CalledProcessError as e {
-                raise e from ClientBundleError(
-                    f"Failed to install npm dependencies: {e.stderr}"
-                ) ;
+                elapsed = time.time() - start_time;
+                if result.returncode != 0 {
+                    print(
+                        f"\n  ✖ npm install failed after {elapsed:.1f}s",
+                        file=sys.stderr
+                    );
+                    raise ClientBundleError(
+                        f"Failed to install npm dependencies: {result.stderr
+                        or result.stdout}"
+                    ) ;
+                }
+                print(f"  ✔ Dependencies installed ({elapsed:.1f}s)", flush=True);
             } except FileNotFoundError {
                 raise None from ClientBundleError(
                     'npm command not found. Ensure Node.js and npm are installed.'
@@ -431,15 +448,20 @@ impl ViteBundler.build(self: ViteBundler, entry_file: Optional[Path] = None) -> 
             command = ['npm', 'run', 'build'];
         }
         # Run vite from client build directory so it can find node_modules
+        print("  ⏳ Building client bundle...", flush=True);
+        start_time = time.time();
         result = subprocess.run(
             command, cwd=build_dir, check=False, capture_output=True, text=True
         );
+        elapsed = time.time() - start_time;
         if result.returncode != 0 {
+            print(f"\n  ✖ Vite build failed after {elapsed:.1f}s", file=sys.stderr);
             error_msg = result.stderr or result.stdout or 'Unknown error';
             raise ClientBundleError(
                 f"Vite build failed:\n{error_msg}\nCommand: {' '.join(command)}"
             ) from None ;
         }
+        print(f"  ✔ Client bundle built ({elapsed:.1f}s)", flush=True);
     } finally {
         # Clean up temporary package.json in client build dir
         build_package_json = build_dir / 'package.json';
@@ -558,8 +580,54 @@ export default defineConfig({{
     return config_path;
 }
 
+"""Create config files from jac.toml [plugins.client.configs].
+
+Generates JavaScript config files (e.g., postcss.config.js, tailwind.config.js)
+from TOML configuration. Each key in [plugins.client.configs] becomes a config file.
+
+Example jac.toml:
+    [plugins.client.configs.postcss]
+    plugins = ["tailwindcss", "autoprefixer"]
+
+    [plugins.client.configs.tailwind]
+    content = ["./src/**/*.{js,jsx}"]
+
+This generates:
+    - .jac/client/configs/postcss.config.js
+    - .jac/client/configs/tailwind.config.js
+"""
+impl ViteBundler.create_config_files(self: ViteBundler) -> list[Path] {
+    configs = self.config_loader.get_configs();
+    if not configs {
+        return [];
+    }
+    build_dir = self._get_client_dir();
+    configs_dir = build_dir / 'configs';
+    configs_dir.mkdir(parents=True, exist_ok=True);
+    created_files: list[Path] = [];
+    for (config_name, config_data) in configs.items() {
+        config_path = configs_dir / f'{config_name}.config.js';
+
+        # Convert the TOML config to JavaScript module.exports
+        js_content = _toml_config_to_js(config_name, config_data);
+        config_path.write_text(js_content, encoding='utf-8');
+        created_files.append(config_path);
+    }
+    return created_files;
+}
+
+"""Convert TOML config data to JavaScript config file content.
+
+Generates a generic module.exports with the config data as JSON.
+"""
+def _toml_config_to_js(config_name: str, config_data: dict) -> str {
+    return f"module.exports = {json.dumps(config_data, indent=2)};\n";
+}
+
 """Start Vite dev server as a subprocess."""
 impl ViteBundler.start_dev_server(self: ViteBundler, port: int = 3000) -> Any {
+    import sys;
+    import time;
     build_dir = self._get_client_dir();
     node_modules = build_dir / 'node_modules';
     # Create/update index.html for dev server (load from compiled/ for HMR)
@@ -590,17 +658,30 @@ impl ViteBundler.start_dev_server(self: ViteBundler, port: int = 3000) -> Any {
             shutil.copy2(generated_package_json, build_package_json);
         }
         try {
-            print("[Vite] Installing dependencies...");
-            subprocess.run(
-                ['npm', 'install'],
+            print(
+                "  ⏳ Installing npm dependencies (this may take a minute)...",
+                flush=True
+            );
+            start_time = time.time();
+            result = subprocess.run(
+                ['npm', 'install', '--progress'],
                 cwd=build_dir,
-                check=True,
+                check=False,
                 capture_output=True,
                 text=True
             );
-        } except subprocess.CalledProcessError as e {
-            print(f"[Vite] Error installing dependencies: {e.stderr}");
-            raise ;
+            elapsed = time.time() - start_time;
+            if result.returncode != 0 {
+                print(
+                    f"\n  ✖ npm install failed after {elapsed:.1f}s", file=sys.stderr
+                );
+                print(f"  Error: {result.stderr or result.stdout}", file=sys.stderr);
+                raise ClientBundleError(
+                    f"Failed to install npm dependencies: {result.stderr
+                    or result.stdout}"
+                ) ;
+            }
+            print(f"  ✔ Dependencies installed ({elapsed:.1f}s)", flush=True);
         } finally {
             # Clean up temp package.json
             if build_package_json.exists() {
@@ -616,7 +697,7 @@ impl ViteBundler.start_dev_server(self: ViteBundler, port: int = 3000) -> Any {
         ) ;
     }
     config_rel = dev_config.relative_to(build_dir);
-    print(f"[Vite] Starting dev server on port {port}...");
+    logger.debug(f"Starting Vite dev server on port {port}");
     # Start Vite in dev mode (let output go to terminal for HMR visibility)
     process = subprocess.Popen(
         ['npx', 'vite', '--config', str(config_rel), '--port', str(port)],

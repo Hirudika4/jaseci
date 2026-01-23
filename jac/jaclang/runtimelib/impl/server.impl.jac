@@ -256,6 +256,7 @@ impl ExecutionManager.spawn_walker(
     walker_cls: type[WalkerArchetype], fields: dict[(str, Any)], username: str
 ) -> dict[str, JsonValue] {
     import from jaclang.pycore.constructs { NodeArchetype }
+    import from inspect { iscoroutine }
     root_id = self.user_manager.get_root_id(username);
     if not root_id {
         return {'error': 'User not found'};
@@ -275,7 +276,11 @@ impl ExecutionManager.spawn_walker(
         } else {
             target_node = ctx.get_root();
         }
-        Jac.spawn(<>walker, target_node);
+        spawn_result = Jac.spawn(<>walker, target_node);
+        # Handle async walkers - await the coroutine if spawn returns one
+        if iscoroutine(spawn_result) {
+            await spawn_result;
+        }
         Jac.commit();  # Persist changes
         return {
             'result': JacSerializer.serialize(<>walker),
@@ -348,6 +353,10 @@ Access level logic:
 - Explicitly marked with `pub`: no authentication required (stores False)
 - Explicitly marked with `protect` or `priv`: authentication required (stores True)
 - No access modifier specified: authentication required (stores True) - secure by default
+
+This method handles both directly defined and imported walkers/functions by:
+1. Processing the main module's AST for direct definitions
+2. Looking up the source module AST for imported walker classes
 """
 impl ModuleIntrospector._extract_access_levels -> None {
     if not self._module {
@@ -358,36 +367,84 @@ impl ModuleIntrospector._extract_access_levels -> None {
     import from jaclang.pycore.constant { Tokens as Tok }
     self._function_access = {};
     self._walker_access = {};
+    # Helper to check if an archetype AST node is explicitly public
+    def is_archetype_public(arch_ast: uni.Archetype) -> bool {
+        return arch_ast.access is not None and arch_ast.access.tag.name == Tok.KW_PUB;
+    }
+    # Helper to find walker access level from a module AST
+    def find_walker_access_in_ast(
+        mod_ast: uni.Module, walker_name: str
+    ) -> (bool | None) {
+        for item in mod_ast.body {
+            if isinstance(item, uni.Archetype) and item.name.sym_name == walker_name {
+                return not is_archetype_public(item);  # True = auth required, False = public
+
+            }
+        }
+        return None;
+    }
+    # Helper to get AST for a module path
+    def get_module_ast(mod_path: str) -> (uni.Module | None) {
+        ast = Jac.program.mod.hub.get(mod_path);
+        if not ast {
+            ast = Jac.program.compile(mod_path);
+        }
+        return ast;
+    }
+    # Get main module AST
     mod_path = getattr(self._module, '__file__', None);
     if not mod_path {
         return;
     }
-    mod_ast = Jac.program.mod.hub.get(mod_path);
-    # If module not in hub, compile it to get the AST
-    if not mod_ast {
-        mod_ast = Jac.program.compile(mod_path);
-    }
+    mod_ast = get_module_ast(mod_path);
     if not mod_ast {
         return;
     }
+    # Process direct definitions in main module
     for item in mod_ast.body {
-        if (isinstance(item, uni.Ability) and (item.name_ref is not None)) {
+        if isinstance(item, uni.Ability) and item.name_ref is not None {
             func_name = item.name_ref.sym_name;
-            # Only explicitly `pub` marked functions are public (no auth required)
-            # No modifier or protect/priv = requires auth (secure by default)
-            is_explicitly_public = item.access and (item.access.tag.name == Tok.KW_PUB);
+            is_explicitly_public = item.access and item.access.tag.name == Tok.KW_PUB;
             self._function_access[func_name] = not is_explicitly_public;
         } elif isinstance(item, uni.Archetype) {
             arch_name = item.name.sym_name;
             if hasattr(self._module, arch_name) {
                 cls = getattr(self._module, arch_name);
-                if (isinstance(cls, <>type) and issubclass(cls, WalkerArchetype)) {
-                    # Only explicitly `pub` marked walkers are public (no auth required)
-                    # No modifier or protect/priv = requires auth (secure by default)
-                    is_explicitly_public = item.access
-                    and (item.access.tag.name == Tok.KW_PUB);
-                    self._walker_access[arch_name] = not is_explicitly_public;
+                if isinstance(cls, <>type) and issubclass(cls, WalkerArchetype) {
+                    self._walker_access[arch_name] = not is_archetype_public(item);
                 }
+            }
+        }
+    }
+    # Process imported walkers - look up their source module's AST
+    for (name, cls) in inspect.getmembers(self._module) {
+        if (
+            isinstance(cls, <>type)
+            and issubclass(cls, WalkerArchetype)
+            and cls is not WalkerArchetype
+            and name not in self._walker_access  # Not already processed as direct definition
+        ) {
+            # Get the source file where this walker class is defined
+            try {
+                source_file = inspect.getfile(cls);
+            } except (TypeError, OSError) {
+                # Can't determine source file, default to requiring auth
+                self._walker_access[name] = True;
+                continue;
+            }
+            # Try to get the AST from the source module
+            source_ast = get_module_ast(source_file);
+            if source_ast {
+                access_level = find_walker_access_in_ast(source_ast, name);
+                if access_level is not None {
+                    self._walker_access[name] = access_level;
+                } else {
+                    # Walker not found in AST, default to requiring auth (secure by default)
+                    self._walker_access[name] = True;
+                }
+            } else {
+                # Can't get AST, default to requiring auth (secure by default)
+                self._walker_access[name] = True;
             }
         }
     }
@@ -540,23 +597,40 @@ impl ModuleIntrospector.introspect_walker(
 ) -> dict[str, Any] {
     try {
         sig = inspect.signature(walker_cls.init);
-        type_hints = get_type_hints(walker_cls.init);
+        try {
+            type_hints = get_type_hints(walker_cls.init);
+        } except Exception {
+            type_hints = {};
+        }
     } except Exception {
         return {'fields': {}};
     }
-    fields = {
-        name: {
-            'type': getattr(
-                type_hints.get(name, Any), '__name__', str(type_hints.get(name, Any))
-            ),
+    fields: dict[str, dict[str, Any]] = {};
+    for (name, param) in sig.parameters.items() {
+        if (name in ('self', 'args', 'kwargs')) {
+            continue;
+        }
+        # Try to get type from type_hints first
+        type_obj = type_hints.get(name, None);
+        if type_obj is not None {
+            type_name = getattr(type_obj, '__name__', str(type_obj));
+        } else {
+            # Fall back to parameter annotation
+            annotation = param.annotation;
+            if (annotation != inspect.Parameter.empty) {
+                type_name = getattr(annotation, '__name__', str(annotation));
+            } else {
+                type_name = 'Any';
+            }
+        }
+        fields[name] = {
+            'type': type_name,
             'required': (param.default == inspect.Parameter.empty),
             'default': None
             if (param.default == inspect.Parameter.empty)
             else param.default
-        }
-        for (name, param) in sig.parameters.items()
-        if (name not in ('self', 'args', 'kwargs'))
-    };
+        };
+    }
     fields['_jac_spawn_node'] = {
         'type': 'str (node ID, optional)',
         'required': False,
@@ -954,7 +1028,7 @@ impl ExecutionHandler.spawn_walker(
             meta=Meta(extra={'http_status': 404})
         );
     }
-    result = self.execution_manager.spawn_walker(walkers[name], fields, username);
+    result = await self.execution_manager.spawn_walker(walkers[name], fields, username);
     return TransportResponse.success(
         data=result, meta=Meta(extra={'http_status': 200})
     );
@@ -1384,8 +1458,9 @@ impl JacAPIServer.create_handler -> type[BaseHTTPRequestHandler] {
                     }
                 }
                 fields = data | {'_jac_spawn_node': node_id};
-                response = server.execution_handler.spawn_walker(
-                    name, fields, username
+                import asyncio;
+                response = asyncio.run(
+                    server.execution_handler.spawn_walker(name, fields, username)
                 );
                 self._send_response(response);
             } else {
@@ -1496,25 +1571,25 @@ impl JacAPIServer.print_endpoint_docs -> None {
 }
 
 """Start the HTTP server."""
-impl JacAPIServer.start(watch: bool = False) -> None {
+impl JacAPIServer.start(dev: bool = False) -> None {
     self.introspector.load();
-    # Eagerly build client bundle if there are client exports (skip in watch mode)
-    if not watch {
+    # Eagerly build client bundle if there are client exports (skip in dev mode)
+    if not dev {
         client_exports = self.introspector._client_manifest.get('exports', []);
         if client_exports {
-            import time;
-            print("Building client bundle...", flush=True);
-            start_time = time.time();
+            import from jaclang.cli.console { console }
             try {
+                # ViteBundler.build() handles its own progress messages
                 self.introspector.ensure_bundle();
-                elapsed = time.time() - start_time;
-                print(f"Client bundle ready ({elapsed:.1f}s).");
+                print(
+                    f"\n  🚀 Your app is ready at http://localhost:{self.port}/\n",
+                    flush=True
+                );
             } except Exception as e {
                 import sys;
                 import traceback;
-                print(f"\n[ERROR] Failed to build client bundle:", file=sys.stderr);
-                print(f"{e}", file=sys.stderr);
-                print("\nFull traceback:", file=sys.stderr);
+                console.warning(f"Failed to build client bundle: {e}");
+                console.print("\n  Full traceback:", style="muted", file=sys.stderr);
                 traceback.print_exc(file=sys.stderr);
                 print(
                     f"\nClient pages will not be available until this is fixed.\n",

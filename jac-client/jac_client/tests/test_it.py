@@ -6,89 +6,21 @@ import gc
 import json
 import os
 import shutil
-import socket
-import sys
 import tempfile
 import time
 from http.client import RemoteDisconnected
-from pathlib import Path
 from subprocess import PIPE, Popen, run
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import pytest
 
-
-def get_free_port() -> int:
-    """Get a free port by binding to port 0 and releasing it.
-
-    This ensures each test instance gets a unique port when running in parallel.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
-
-
-def _get_jac_command() -> list[str]:
-    """Get the jac command with proper path handling."""
-    jac_path = shutil.which("jac")
-    if jac_path:
-        return [jac_path]
-    return [sys.executable, "-m", "jaclang"]
-
-
-def _get_env_with_npm() -> dict[str, str]:
-    """Get environment dict with npm in PATH."""
-    env = os.environ.copy()
-    npm_path = shutil.which("npm")
-    if npm_path:
-        npm_dir = str(Path(npm_path).parent)
-        current_path = env.get("PATH", "")
-        if npm_dir not in current_path:
-            env["PATH"] = f"{npm_dir}:{current_path}"
-    # Also check common nvm locations
-    nvm_dir = os.environ.get("NVM_DIR", os.path.expanduser("~/.nvm"))
-    nvm_node_bin = Path(nvm_dir) / "versions" / "node"
-    if nvm_node_bin.exists():
-        for version_dir in nvm_node_bin.iterdir():
-            bin_dir = version_dir / "bin"
-            if bin_dir.exists() and (bin_dir / "npm").exists():
-                current_path = env.get("PATH", "")
-                if str(bin_dir) not in current_path:
-                    env["PATH"] = f"{bin_dir}:{current_path}"
-                break
-    return env
-
-
-def _wait_for_port(
-    host: str,
-    port: int,
-    timeout: float = 60.0,
-    poll_interval: float = 0.5,
-) -> None:
-    """Block until a TCP port is accepting connections or timeout.
-
-    Raises:
-        TimeoutError: if the port is not accepting connections within timeout.
-    """
-    deadline = time.time() + timeout
-    last_err: Exception | None = None
-
-    while time.time() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(poll_interval)
-            try:
-                sock.connect((host, port))
-                return
-            except OSError as exc:  # Connection refused / timeout
-                last_err = exc
-                time.sleep(poll_interval)
-
-    raise TimeoutError(
-        f"Timed out waiting for {host}:{port} to become available. Last error: {last_err}"
-    )
+from .test_helpers import (
+    get_env_with_npm,
+    get_free_port,
+    get_jac_command,
+    wait_for_port,
+)
 
 
 def _wait_for_endpoint(
@@ -152,7 +84,7 @@ def _wait_for_endpoint(
 def test_all_in_one_app_endpoints() -> None:
     """Create a Jac app, copy @all-in-one into it, install packages from jac.toml, then verify endpoints."""
     print(
-        "[DEBUG] Starting test_all_in_one_app_endpoints using jac create --cl + @all-in-one"
+        "[DEBUG] Starting test_all_in_one_app_endpoints using jac create --use client + @all-in-one"
     )
 
     # Resolve the path to jac_client/examples/all-in-one relative to this test file.
@@ -173,9 +105,9 @@ def test_all_in_one_app_endpoints() -> None:
             print(f"[DEBUG] Changed working directory to {temp_dir}")
 
             # 1. Create a new Jac app via CLI (requires jac + jac-client plugin installed)
-            print(f"[DEBUG] Running 'jac create --cl {app_name}'")
+            print(f"[DEBUG] Running 'jac create --use client {app_name}'")
             process = Popen(
-                ["jac", "create", "--cl", app_name],
+                ["jac", "create", "--use", "client", app_name],
                 stdin=PIPE,
                 stdout=PIPE,
                 stderr=PIPE,
@@ -185,21 +117,21 @@ def test_all_in_one_app_endpoints() -> None:
             returncode = process.returncode
 
             print(
-                "[DEBUG] 'jac create --cl' completed "
+                "[DEBUG] 'jac create --use client' completed "
                 f"returncode={returncode}\n"
                 f"STDOUT:\n{stdout}\n"
                 f"STDERR:\n{stderr}\n"
             )
 
-            # If the currently installed `jac` CLI does not support `create --cl`,
+            # If the currently installed `jac` CLI does not support `create --use client`,
             # fail the test instead of skipping it.
-            if returncode != 0 and "unrecognized arguments: --cl" in stderr:
+            if returncode != 0 and "unrecognized arguments: --use" in stderr:
                 pytest.fail(
-                    "Test failed: installed `jac` CLI does not support `create --cl`."
+                    "Test failed: installed `jac` CLI does not support `create --use client`."
                 )
 
             assert returncode == 0, (
-                f"jac create --cl failed\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n"
+                f"jac create --use client failed\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n"
             )
 
             project_path = os.path.join(temp_dir, app_name)
@@ -219,17 +151,17 @@ def test_all_in_one_app_endpoints() -> None:
                 else:
                     shutil.copy2(src, dst)
 
-            # 3. Install packages from jac.toml using `jac add --cl`
+            # 3. Install packages from jac.toml using `jac add --npm`
             # This reads packages from jac.toml, generates package.json, and runs npm install
-            print("[DEBUG] Running 'jac add --cl' to install packages from jac.toml")
+            print("[DEBUG] Running 'jac add --npm' to install packages from jac.toml")
             jac_add_result = run(
-                ["jac", "add", "--cl"],
+                ["jac", "add", "--npm"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
             )
             print(
-                "[DEBUG] 'jac add --cl' completed "
+                "[DEBUG] 'jac add --npm' completed "
                 f"returncode={jac_add_result.returncode}\n"
                 f"STDOUT (truncated to 2000 chars):\n{jac_add_result.stdout[:2000]}\n"
                 f"STDERR (truncated to 2000 chars):\n{jac_add_result.stderr[:2000]}\n"
@@ -237,7 +169,7 @@ def test_all_in_one_app_endpoints() -> None:
 
             if jac_add_result.returncode != 0:
                 pytest.fail(
-                    f"Test failed: jac add --cl failed or npm is not available in PATH.\n"
+                    f"Test failed: jac add --npm failed or npm is not available in PATH.\n"
                     f"STDOUT:\n{jac_add_result.stdout}\n"
                     f"STDERR:\n{jac_add_result.stderr}\n"
                 )
@@ -263,7 +195,7 @@ def test_all_in_one_app_endpoints() -> None:
                 print(
                     f"[DEBUG] Waiting for server to be available on 127.0.0.1:{server_port}"
                 )
-                _wait_for_port("127.0.0.1", server_port, timeout=90.0)
+                wait_for_port("127.0.0.1", server_port, timeout=90.0)
                 print(
                     f"[DEBUG] Server is now accepting connections on 127.0.0.1:{server_port}"
                 )
@@ -627,10 +559,10 @@ def test_all_in_one_app_endpoints() -> None:
 
 
 def test_default_client_app_renders() -> None:
-    """Test that a default `jac create --cl` app renders correctly when served.
+    """Test that a default `jac create --use client` app renders correctly when served.
 
     This test validates the out-of-the-box experience:
-    1. Creates a new client app using `jac create --cl`
+    1. Creates a new client app using `jac create --use client`
     2. Installs packages
     3. Starts the server
     4. Validates that the default app renders with expected content
@@ -647,11 +579,13 @@ def test_default_client_app_renders() -> None:
             print(f"[DEBUG] Changed working directory to {temp_dir}")
 
             # 1. Create a new default Jac client app
-            jac_cmd = _get_jac_command()
-            env = _get_env_with_npm()
-            print(f"[DEBUG] Running '{' '.join(jac_cmd)} create --cl {app_name}'")
+            jac_cmd = get_jac_command()
+            env = get_env_with_npm()
+            print(
+                f"[DEBUG] Running '{' '.join(jac_cmd)} create --use client {app_name}'"
+            )
             process = Popen(
-                [*jac_cmd, "create", "--cl", app_name],
+                [*jac_cmd, "create", "--use", "client", app_name],
                 stdin=PIPE,
                 stdout=PIPE,
                 stderr=PIPE,
@@ -662,18 +596,18 @@ def test_default_client_app_renders() -> None:
             returncode = process.returncode
 
             print(
-                f"[DEBUG] 'jac create --cl' completed returncode={returncode}\n"
+                f"[DEBUG] 'jac create --use client' completed returncode={returncode}\n"
                 f"STDOUT:\n{stdout}\n"
                 f"STDERR:\n{stderr}\n"
             )
 
-            if returncode != 0 and "unrecognized arguments: --cl" in stderr:
+            if returncode != 0 and "unrecognized arguments: --use" in stderr:
                 pytest.fail(
-                    "Test failed: installed `jac` CLI does not support `create --cl`."
+                    "Test failed: installed `jac` CLI does not support `create --use client`."
                 )
 
             assert returncode == 0, (
-                f"jac create --cl failed\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n"
+                f"jac create --use client failed\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n"
             )
 
             project_path = os.path.join(temp_dir, app_name)
@@ -695,28 +629,28 @@ def test_default_client_app_renders() -> None:
             jac_toml_path = os.path.join(project_path, "jac.toml")
             assert os.path.isfile(jac_toml_path), "jac.toml should exist"
 
-            # 2. Ensure packages are installed (jac create --cl should have done this)
-            # If node_modules doesn't exist, run jac add --cl
+            # 2. Ensure packages are installed (jac create --use client should have done this)
+            # If node_modules doesn't exist, run jac add --npm
             node_modules_path = os.path.join(
                 project_path, ".jac", "client", "node_modules"
             )
             if not os.path.isdir(node_modules_path):
-                print("[DEBUG] node_modules not found, running 'jac add --cl'")
+                print("[DEBUG] node_modules not found, running 'jac add --npm'")
                 jac_add_result = run(
-                    [*jac_cmd, "add", "--cl"],
+                    [*jac_cmd, "add", "--npm"],
                     cwd=project_path,
                     capture_output=True,
                     text=True,
                     env=env,
                 )
                 print(
-                    f"[DEBUG] 'jac add --cl' completed returncode={jac_add_result.returncode}\n"
+                    f"[DEBUG] 'jac add --npm' completed returncode={jac_add_result.returncode}\n"
                     f"STDOUT (truncated):\n{jac_add_result.stdout[:1000]}\n"
                     f"STDERR (truncated):\n{jac_add_result.stderr[:1000]}\n"
                 )
                 if jac_add_result.returncode != 0:
                     pytest.fail(
-                        f"jac add --cl failed\n"
+                        f"jac add --npm failed\n"
                         f"STDOUT:\n{jac_add_result.stdout}\n"
                         f"STDERR:\n{jac_add_result.stderr}\n"
                     )
@@ -737,7 +671,7 @@ def test_default_client_app_renders() -> None:
 
                 # Wait for server to be ready
                 print(f"[DEBUG] Waiting for server on 127.0.0.1:{server_port}")
-                _wait_for_port("127.0.0.1", server_port, timeout=90.0)
+                wait_for_port("127.0.0.1", server_port, timeout=90.0)
                 print(
                     f"[DEBUG] Server is accepting connections on 127.0.0.1:{server_port}"
                 )

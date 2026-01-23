@@ -25,6 +25,22 @@ from jaclang.pycore.program import JacProgram
 from jaclang.pycore.runtime import JacRuntime as Jac
 from jaclang.pycore.runtime import JacRuntimeImpl, JacRuntimeInterface, plugin_manager
 
+# =============================================================================
+# Console Output Normalization - Disable Rich styling during tests
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def disable_rich_console_formatting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable Rich console formatting for consistent test output.
+
+    Sets NO_COLOR and NO_EMOJI environment variables to ensure tests
+    get plain text output without ANSI codes or emoji prefixes.
+    """
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("NO_EMOJI", "1")
+
+
 # Store unregistered plugins globally for session-level management
 _external_plugins: list = []
 
@@ -148,11 +164,11 @@ def npm_cache_dir() -> Generator[Path, None, None]:
     jac_toml = cache_dir / "jac.toml"
     jac_toml.write_text(_get_minimal_jac_toml())
 
-    # Run jac add --cl to install packages
+    # Run jac add --npm to install packages
     jac_cmd = _get_jac_command()
     env = _get_env_with_npm()
     result = subprocess.run(
-        [*jac_cmd, "add", "--cl"],
+        [*jac_cmd, "add", "--npm"],
         cwd=cache_dir,
         capture_output=True,
         text=True,
@@ -238,7 +254,7 @@ antd = "^6.0.0"
     jac_cmd = _get_jac_command()
     env = _get_env_with_npm()
     result = subprocess.run(
-        [*jac_cmd, "add", "--cl"],
+        [*jac_cmd, "add", "--npm"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
