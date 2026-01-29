@@ -21,6 +21,27 @@ def _ensure_jac_runtime -> None {
     }
 }
 
+"""Re-discover jac.toml from the file's directory when an absolute/relative path is given.
+
+This ensures that when running `jac start /path/to/project/main.jac` from any directory,
+the jac.toml in /path/to/project/ is found and used for plugin configuration.
+"""
+def _discover_config_from_file(filename: str) -> None {
+    import from pathlib { Path }
+    import from jaclang.project.config { JacConfig, set_config }
+    import from jaclang.project.dependencies { add_venv_to_path }
+
+    file_path = Path(filename).resolve();
+    file_dir = file_path.parent;
+
+    # Re-discover config starting from the file's directory
+    config = JacConfig.discover(start_path=file_dir);
+    if config is not None {
+        set_config(config);
+        add_venv_to_path(config);
+    }
+}
+
 """Create JacRuntime and return the base path, module name, and runtime state.
 
 This is the canonical function for setting up CLI execution context.
@@ -52,6 +73,8 @@ def _proc_file(filename: str) -> tuple {
 impl run(filename: str, main: bool = True, cache: bool = True) -> int {
     _ensure_jac_runtime();
     import from jaclang.pycore.runtime { JacRuntime as Jac }
+    # Re-discover config from the file's directory (handles absolute paths)
+    _discover_config_from_file(filename);
     (base, mod, mach) = _proc_file(filename);
     lng = filename.split('.')[-1];
     try {
@@ -83,6 +106,8 @@ impl enter(
     _ensure_jac_runtime();
     import from jaclang.pycore.runtime { JacRuntime as Jac }
     import from jaclang.pycore.constructs { WalkerArchetype }
+    # Re-discover config from the file's directory (handles absolute paths)
+    _discover_config_from_file(filename);
     (base, mod, mach) = _proc_file(filename);
     # Set user root if provided (for permission boundary)
     if <>root {
@@ -149,6 +174,8 @@ impl start(
         }
         return 1;
     }
+    # Re-discover config from the file's directory (handles absolute paths)
+    _discover_config_from_file(filename);
     (base, mod, mach) = _proc_file(filename);
     lng = filename.split('.')[-1];
     try {
@@ -283,6 +310,7 @@ impl start(
 def _check_watchdog_available -> bool {
     import from pathlib { Path }
     import from jaclang.project.config { get_config }
+    import from jaclang.project.dependencies { get_venv_site_packages }
 
     config = get_config();
     if config is None {
@@ -294,13 +322,13 @@ def _check_watchdog_available -> bool {
             return False;
         }
     }
-    # Check if watchdog is installed in the project's packages directory
-    packages_dir = config.get_packages_dir();
-    if packages_dir.exists() {
-        # Add packages dir to path temporarily to check
+    # Check if watchdog is installed in the project's venv
+    site_packages = get_venv_site_packages(config.get_venv_dir());
+    if site_packages.exists() {
+        # Add site-packages to path temporarily to check
         import sys;
         original_path = sys.path.copy();
-        sys.path.insert(0, str(packages_dir));
+        sys.path.insert(0, str(site_packages));
         try {
             import watchdog;
             return True;
@@ -334,7 +362,9 @@ def _get_network_ips -> list[str] {
                 }
             }
         }
-    } except Exception { }
+    } except Exception {
+    # Silently ignore network interface errors
+    }
     return ips;
 }
 

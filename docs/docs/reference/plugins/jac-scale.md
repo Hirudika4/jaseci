@@ -34,6 +34,11 @@ jac start app.jac
 | `--host` | Bind address | 0.0.0.0 |
 | `--workers` | Number of workers | 1 |
 | `--reload` | Hot reload on changes | false |
+| `--scale` | Deploy to Kubernetes | false |
+| `--build` `-b` | Build and push Docker image (with --scale) | false |
+| `--experimental` `-e` | Install from repo instead of PyPI (with --scale) | false |
+| `--target` | Deployment target (kubernetes, aws, gcp) | kubernetes |
+| `--registry` | Image registry (dockerhub, ecr, gcr) | dockerhub |
 
 ### Examples
 
@@ -62,7 +67,7 @@ Each walker becomes an API endpoint:
 ```jac
 walker get_users {
     can fetch with `root entry {
-        report [...]
+        report [];
     }
 }
 ```
@@ -144,12 +149,14 @@ curl -X POST http://localhost:8000/walker/my_walker \
 ### Grant/Revoke Permissions
 
 ```jac
-# Grant permission
-grant(node, WritePerm);
-grant(node, level=ConnectPerm);
+with entry {
+    # Grant permission
+    grant(node, WritePerm);
+    grant(node, level=ConnectPerm);
 
-# Revoke permission
-revoke(node);
+    # Revoke permission
+    revoke(node);
+}
 ```
 
 ### Custom Access Validation
@@ -398,6 +405,25 @@ Cross-Origin-Opener-Policy = "same-origin"
 Cross-Origin-Embedder-Policy = "require-corp"
 ```
 
+### Package Version Pinning
+
+Configure specific package versions for Kubernetes deployments:
+
+```toml
+[plugins.scale.kubernetes.plugin_versions]
+jaclang = "0.1.5"      # Specific version
+jac_scale = "latest"   # Latest from PyPI (default)
+jac_client = "0.1.0"   # Specific version
+jac_byllm = "none"     # Skip installation
+```
+
+| Package | Description | Default |
+|---------|-------------|---------|
+| `jaclang` | Core Jac language package | latest |
+| `jac_scale` | Scaling plugin | latest |
+| `jac_client` | Client/frontend support | latest |
+| `jac_byllm` | LLM integration (use "none" to skip) | latest |
+
 ---
 
 ## Health Checks
@@ -444,15 +470,19 @@ walker ready {
 ### Root Access
 
 ```jac
-# Get all roots in memory/database
-roots = allroots();
+with entry {
+    # Get all roots in memory/database
+    roots = allroots();
+}
 ```
 
 ### Memory Commit
 
 ```jac
-# Commit memory to database
-commit();
+with entry {
+    # Commit memory to database
+    commit();
+}
 ```
 
 ---
