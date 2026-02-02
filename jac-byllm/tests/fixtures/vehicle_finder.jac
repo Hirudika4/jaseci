@@ -49,9 +49,7 @@ walker showroom_visitor {
 with entry {
     show_rooms = [root --> (`?VehicleShowroom)];
 
-    if show_rooms {
-        show_room = show_rooms[0];
-    } else {
+    if not show_rooms {
         show_room = root ++> VehicleShowroom();
         show_room ++> Car();
         show_room ++> Bike();
@@ -60,3 +58,4 @@ with entry {
 
     showroom_visitor([4]) spawn root;
 }
+
