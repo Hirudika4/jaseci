@@ -9,12 +9,6 @@ impl Model.postinit -> None {
     self.http_client = bool(
         self.config.get("http_client", _model_config.get("http_client", False))
     );
-    # Resolve api_key: constructor > instance config > global config > env vars (litellm fallback)
-    self.api_key = (
-        self.api_key
-        or self.config.get("api_key", "")
-        or _model_config.get("api_key", "")
-    );
     # When model_name is 'mockllm', delegate to MockLLM behavior
     if self.model_name == MODEL_MOCK {
         self._mock_delegate = MockLLM(model_name=self.model_name, config=self.config);
@@ -51,6 +45,7 @@ impl Model.model_call_no_stream(params: dict) -> dict {
     } elif self.proxy {
         client = OpenAI(base_url=self.api_base, api_key=self.api_key or None);
         response = client.chat.completions.create(**params);
+        response = response.model_dump();
     } else {
         response = litellm.completion(api_key=self.api_key or None, **params);
     }
@@ -64,12 +59,10 @@ Returns a generator that yields response chunks.
 """
 impl Model.model_call_with_stream(params: dict) {
     if self.proxy {
-        client = OpenAI(base_url=self.api_base, api_key=self.api_key or None);
+        client = OpenAI(base_url=self.api_base, api_key=self.api_key,);
         response = client.chat.completions.create(stream=True, **params);
     } else {
-        response = litellm.completion(
-            stream=True, api_key=self.api_key or None, **params
-        );
+        response = litellm.completion(stream=True, **params);
     }
     return response;
 }

@@ -80,6 +80,10 @@ impl BaseLLM.make_model_params(mt_run: MTRuntime) -> dict {
     default_max_tokens = _call_params_config.get("max_tokens");
     params = {
         "model": self.model_name,
+        "api_key": self.api_key
+        or self.config.get("api_key")
+        or _model_config.get("api_key")
+        or None,
         "api_base": (
             self.config.get("base_url")
             or self.config.get("host")
@@ -156,10 +160,12 @@ impl BaseLLM.dispatch_no_streaming(mt_run: MTRuntime) -> CompletionResult {
     params = self.make_model_params(mt_run);
     # Call the LiteLLM API
     log_params = self.format_prompt(params);
-    self.log_info(f"Calling LLM: {self.model_name} with params: {log_params}");
     self.api_base = params.pop("api_base", DEFAULT_BASE_URL);
     params.pop("api_key", None);
     response = self.model_call_no_stream(params);
+    # Log the actual model that served the request (from response, useful for proxy/pool)
+    actual_model = response.get("model", self.model_name);
+    self.log_info(f"Calling LLM: {actual_model} with params: {log_params}");
     # Output format:
     # https://docs.litellm.ai/docs/#response-format-openai-format
     #
