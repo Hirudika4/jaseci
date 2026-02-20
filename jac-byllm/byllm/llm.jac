@@ -109,7 +109,7 @@ obj ModelPool {
     def shutdown -> None;
 }
 
-"""Primary LLM connector that abstracts LiteLLM functionality.
+"""Primary LLM connector that abstracts LiteLLM functionality
 
 Provides a unified interface for interacting with various language models
 (OpenAI, Anthropic, etc.) through LiteLLM. Supports both direct API calls
