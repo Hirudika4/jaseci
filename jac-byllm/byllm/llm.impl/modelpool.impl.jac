@@ -41,8 +41,13 @@ impl ModelPool.postinit -> None {
     # Start the LiteLLM proxy server as a subprocess
     self._process = subprocess.Popen(
         [
-            'litellm', '--config', self._config_path,
-            '--host', self.host, '--port', str(self._assigned_port)
+            'litellm',
+            '--config',
+            self._config_path,
+            '--host',
+            self.host,
+            '--port',
+            str(self._assigned_port)
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -119,10 +124,7 @@ impl ModelPool._generate_proxy_config -> dict {
             if base_url {
                 litellm_params["api_base"] = base_url;
             }
-            model_list.append({
-                "model_name": name,
-                "litellm_params": litellm_params,
-            });
+            model_list.append({"model_name": name, "litellm_params": litellm_params,});
             if i > 0 {
                 fallback_names.append(name);
             }
@@ -133,7 +135,9 @@ impl ModelPool._generate_proxy_config -> dict {
                 "num_retries": self.num_retries,
                 "timeout": self.timeout,
                 "fallbacks": [{"pool-primary": fallback_names}],
+
             },
+
         };
     } else {
         # For load-balancing strategies, all models share the same name
@@ -151,10 +155,9 @@ impl ModelPool._generate_proxy_config -> dict {
             if base_url {
                 litellm_params["api_base"] = base_url;
             }
-            model_list.append({
-                "model_name": "pool-model",
-                "litellm_params": litellm_params,
-            });
+            model_list.append(
+                {"model_name": "pool-model", "litellm_params": litellm_params,}
+            );
         }
         config = {
             "model_list": model_list,
@@ -162,7 +165,9 @@ impl ModelPool._generate_proxy_config -> dict {
                 "routing_strategy": self.strategy,
                 "num_retries": self.num_retries,
                 "timeout": self.timeout,
+
             },
+
         };
     }
     return config;
@@ -189,7 +194,8 @@ impl ModelPool._wait_for_ready(timeout: float = 30.0) -> bool {
         if self._process is not None and self._process.poll() is not None {
             stderr = (
                 self._process.stderr.read().decode("utf-8")
-                if self._process.stderr else ""
+                if self._process.stderr
+                else ""
             );
             logger.error(
                 f"ModelPool: Proxy process exited with code "
