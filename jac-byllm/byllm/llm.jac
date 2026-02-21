@@ -86,7 +86,6 @@ the proxy which handles fallback, load-balancing, and cost-based routing.
 Strategies: 'fallback' (ordered), 'simple-shuffle' (round-robin),
 'cost-based-routing' (cheapest first), 'latency-based-routing' (fastest first).
 """
-
 obj ModelPool {
     has models: list[BaseLLM],
         strategy: str = "fallback",

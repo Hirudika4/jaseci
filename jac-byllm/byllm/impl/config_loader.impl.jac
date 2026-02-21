@@ -26,11 +26,7 @@ impl JacByllmConfig.get_default_config(self: JacByllmConfig) -> dict[str, Any] {
         },
         'call_params': {'temperature': 0.7, 'max_tokens': 0},
         'litellm': {'local_cost_map': True, 'drop_params': True},
-        'fallback': {
-            'strategy': 'fallback',
-            'num_retries': 1,
-            'timeout': 60.0
-        },
+        'fallback': {'strategy': 'fallback', 'num_retries': 1, 'timeout': 60.0},
         'system_prompt': ''
     };
 }
