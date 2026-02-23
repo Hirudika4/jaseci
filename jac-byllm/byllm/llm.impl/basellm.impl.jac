@@ -163,7 +163,7 @@ impl BaseLLM.dispatch_no_streaming(mt_run: MTRuntime) -> CompletionResult {
     } except Exception {
         # Log with model_name on failure so verbose output is still captured
         self.log_info(f"Calling LLM: {self.model_name} with params: {log_params}");
-        raise;
+        raise ;
     }
     # Log the actual model that served the request (from response, useful for proxy/pool)
     actual_model = response.get("model", self.model_name);
