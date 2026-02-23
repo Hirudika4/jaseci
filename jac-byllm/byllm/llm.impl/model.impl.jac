@@ -11,7 +11,8 @@ impl Model.postinit -> None {
     );
     # Resolve api_key: constructor > instance config > global config
     if not self.api_key {
-        self.api_key = self.config.get("api_key", "") or _model_config.get("api_key", "");
+        self.api_key = self.config.get("api_key", "")
+        or _model_config.get("api_key", "");
     }
     # When model_name is 'mockllm', delegate to MockLLM behavior
     if self.model_name == MODEL_MOCK {
