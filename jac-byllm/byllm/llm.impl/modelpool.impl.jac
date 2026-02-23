@@ -52,7 +52,7 @@ impl ModelPool.postinit -> None {
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     );
-    # Wait for the proxy server to be ready
+    # Wait for proxy server to be ready
     if not self._wait_for_ready() {
         self.shutdown();
         raise RuntimeError(
