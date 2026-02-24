@@ -64,7 +64,7 @@ Returns a generator that yields response chunks.
 """
 impl Model.model_call_with_stream(params: dict) {
     if self.proxy {
-        client = OpenAI(base_url=self.api_base, api_key=self.api_key,);
+        client = OpenAI(base_url=self.api_base, api_key=self.api_key or None,);
         response = client.chat.completions.create(stream=True, **params);
     } else {
         response = litellm.completion(stream=True, **params);

@@ -78,33 +78,25 @@ obj MockLLM(BaseLLM) {
     override def dispatch_streaming(mt_run: MTRuntime) -> Generator[str, None, None];
 }
 
-"""Pool of LLM models with fallback and load-balancing via LiteLLM proxy.
+"""Pool of LLM models with fallback and load-balancing via LiteLLM Router.
 
-Automatically spawns a LiteLLM proxy server and configures it with the
-specified models and routing strategy. All LLM calls are routed through
-the proxy which handles fallback, load-balancing, and cost-based routing.
 Strategies: 'fallback' (ordered), 'simple-shuffle' (round-robin),
-'cost-based-routing' (cheapest first), 'latency-based-routing' (fastest first).
+'cost-based-routing' (cheapest first), 'latency-based-routing' (fastest first), 
+'least-busy' (least concurrent load), 'usage-based-routing' (least used first).
 """
-obj ModelPool {
-    has models: list[BaseLLM],
+obj ModelPool(BaseLLM) {
+    has model_name: str = "pool-model",
+        models: list[BaseLLM] = [],
         strategy: str = "fallback",
-        host: str = "127.0.0.1",
-        port: int = 0,
         num_retries: int = 1,
         timeout: float = 60.0,
-        call_params: dict[(str, object)] = {},
-        _model: Model | None = None,
-        _process: object = None,
-        _config_path: str = "",
-        _assigned_port: int = 0;
+        _router: object = None,
+        _primary_model_name: str = "pool-model";
 
     def postinit -> None;
-    def __call__(**kwargs: object) -> ModelPool;
-    def invoke(mt_run: MTRuntime) -> object;
-    def _generate_proxy_config -> dict;
-    def _find_free_port -> int;
-    def _wait_for_ready(timeout: float = 30.0) -> bool;
+    override def __call__(**kwargs: object) -> ModelPool;
+    override def model_call_no_stream(params: dict) -> dict;
+    override def model_call_with_stream(params: dict) -> Generator[str, None, None];
     def shutdown -> None;
 }
 
