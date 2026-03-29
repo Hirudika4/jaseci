@@ -20,12 +20,13 @@ impl ModelPool.postinit -> None {
         # Determine router alias: fallback uses unique names; load-balancing shares one.
         name = (
             ("pool-primary" if i == 0 else f"pool-fallback-{i}")
-            if is_fallback
-            else "pool-model"
+                if is_fallback
+                else "pool-model"
         );
         litellm_params: dict = {
             "model": model.model_name,
             "api_key": model.api_key or model.config.get("api_key", "") or None,
+
         };
         base_url = (
             model.config.get("base_url")
@@ -35,11 +36,14 @@ impl ModelPool.postinit -> None {
         if base_url {
             litellm_params["api_base"] = base_url;
         }
-        model_list.append({
-            "model_name": name,
-            "litellm_params": litellm_params,
-            "model_info": {"id": f"pool-model-id-{i}"},
-        });
+        model_list.append(
+            {
+                "model_name": name,
+                "litellm_params": litellm_params,
+                "model_info": {"id": f"pool-model-id-{i}"},
+
+            }
+        );
         if is_fallback and i > 0 {
             fallback_names.append(name);
         }
