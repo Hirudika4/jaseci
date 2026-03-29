@@ -13,37 +13,38 @@ impl ModelPool.postinit -> None {
     if len(self.models) == 0 {
         raise ValueError("ModelPool requires at least one model.");
     }
+    is_fallback = self.strategy == "fallback";
     model_list: list = [];
-    if self.strategy == "fallback" {
-        # Each model gets a unique router name; fallbacks chain from primary.
-        fallback_names: list = [];
-        for (i, model) in enumerate(self.models) {
-            name = "pool-primary" if i == 0 else f"pool-fallback-{i}";
-            litellm_params: dict = {
-                "model": model.model_name,
-                "api_key": model.api_key or model.config.get("api_key", "") or None,
-
-            };
-            base_url = (
-                model.config.get("base_url")
-                or model.config.get("host")
-                or model.config.get("api_base")
-            );
-            if base_url {
-                litellm_params["api_base"] = base_url;
-            }
-            model_list.append(
-                {
-                    "model_name": name,
-                    "litellm_params": litellm_params,
-                    "model_info": {"id": f"pool-fallback-id-{i}"},
-
-                }
-            );
-            if i > 0 {
-                fallback_names.append(name);
-            }
+    fallback_names: list = [];
+    for (i, model) in enumerate(self.models) {
+        # Determine router alias: fallback uses unique names; load-balancing shares one.
+        name = (
+            ("pool-primary" if i == 0 else f"pool-fallback-{i}")
+            if is_fallback
+            else "pool-model"
+        );
+        litellm_params: dict = {
+            "model": model.model_name,
+            "api_key": model.api_key or model.config.get("api_key", "") or None,
+        };
+        base_url = (
+            model.config.get("base_url")
+            or model.config.get("host")
+            or model.config.get("api_base")
+        );
+        if base_url {
+            litellm_params["api_base"] = base_url;
         }
+        model_list.append({
+            "model_name": name,
+            "litellm_params": litellm_params,
+            "model_info": {"id": f"pool-model-id-{i}"},
+        });
+        if is_fallback and i > 0 {
+            fallback_names.append(name);
+        }
+    }
+    if is_fallback {
         self._router = Router(
             model_list=model_list,
             fallbacks=[{"pool-primary": fallback_names}],
@@ -52,30 +53,6 @@ impl ModelPool.postinit -> None {
         );
         self._primary_model_name = "pool-primary";
     } else {
-        # Load-balancing strategies: all models share the same router name.
-        for (i, model) in enumerate(self.models) {
-            litellm_params: dict = {
-                "model": model.model_name,
-                "api_key": model.api_key or model.config.get("api_key", "") or None,
-
-            };
-            base_url = (
-                model.config.get("base_url")
-                or model.config.get("host")
-                or model.config.get("api_base")
-            );
-            if base_url {
-                litellm_params["api_base"] = base_url;
-            }
-            model_list.append(
-                {
-                    "model_name": "pool-model",
-                    "litellm_params": litellm_params,
-                    "model_info": {"id": f"pool-model-id-{i}"},
-
-                }
-            );
-        }
         self._router = Router(
             model_list=model_list,
             routing_strategy=self.strategy,
