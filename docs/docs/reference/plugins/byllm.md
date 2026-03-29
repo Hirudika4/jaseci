@@ -194,7 +194,7 @@ You can also override per-file with `glob llm = Model(...)` (see [Custom Model (
 
 ## ModelPool
 
-`ModelPool` is a drop-in replacement for `Model` that wraps a LiteLLM `Router` running in-process — no subprocess, no proxy server. It handles fallback, retries, and load-distribution across a list of `Model` instances. Use `by pool()` exactly like `by llm()` — no other call-site changes needed.
+`ModelPool` is a drop-in replacement for `Model` that wraps a LiteLLM `Router` running in-process (no subprocess, no proxy server). It handles fallback, retries, and load-distribution across a list of `Model` instances. Use `by pool()` exactly like `by llm()` - no other call-site changes needed.
 
 ```jac
 import from byllm.lib { Model, ModelPool }
@@ -206,7 +206,7 @@ def answer(question: str) -> str by llm();
 
 ### Fallback
 
-When the primary model fails, `ModelPool` automatically tries the next model in the list. The `"fallback"` strategy uses ordered priority — each model is attempted in sequence, moving to the next only on failure:
+When the primary model fails, `ModelPool` automatically tries the next model in the list. The `"fallback"` strategy uses ordered priority - each model is attempted in sequence, moving to the next only on failure:
 
 ```jac
 import from byllm.lib { Model, ModelPool }
@@ -241,7 +241,7 @@ glob llm = ModelPool(
 );
 ```
 
-Each `by llm()` call is routed to a randomly selected deployment — ideal for distributing requests across multiple API keys to stay within per-key rate limits.
+Each `by llm()` call is routed to a randomly selected deployment - ideal for distributing requests across multiple API keys to stay within per-key rate limits.
 
 ### ModelPool Constructor Parameters
 
@@ -256,8 +256,8 @@ Each `by llm()` call is routed to a randomly selected deployment — ideal for d
 
 | Strategy | Behavior |
 |----------|----------|
-| `"fallback"` | Ordered priority — tries models in sequence, moving to the next on failure |
-| `"simple-shuffle"` | Random pick per call — ideal for rotating across multiple API keys |
+| `"fallback"` | Ordered priority - tries models in sequence, moving to the next on failure |
+| `"simple-shuffle"` | Random pick per call - ideal for rotating across multiple API keys |
 | `"cost-based-routing"` | Cheapest deployment via LiteLLM's built-in cost database |
 | `"latency-based-routing"` | Fastest by EWMA-tracked response time |
 | `"usage-based-routing"` | Lowest current TPM/RPM usage |
