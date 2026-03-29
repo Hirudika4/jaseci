@@ -17,7 +17,7 @@ no proxy server, no startup latency — the Router handles everything in-process
 impl ModelPool.postinit -> None {
     import from litellm { Router }
     if len(self.models) == 0 {
-        raise ValueError("ModelPool requires at least one model.") ;
+        raise ValueError("ModelPool requires at least one model.");
     }
     model_list: list = [];
     if self.strategy == "fallback" {
@@ -110,7 +110,7 @@ or "pool-model") and handles fallback / load-balancing transparently.
 """
 impl ModelPool.model_call_no_stream(params: dict) -> dict {
     if self._router is None {
-        raise RuntimeError("ModelPool router not initialized.") ;
+        raise RuntimeError("ModelPool router not initialized.");
     }
     # cost-based-routing requires acompletion() — its deployment selection
     # only runs on the async path (async_filter_deployments).
@@ -126,7 +126,7 @@ impl ModelPool.model_call_no_stream(params: dict) -> dict {
 """Make a streaming model call via the LiteLLM Router."""
 impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None] {
     if self._router is None {
-        raise RuntimeError("ModelPool router not initialized.") ;
+        raise RuntimeError("ModelPool router not initialized.");
     }
     # cost-based-routing requires acompletion() on the async path.
     # Collect chunks from the async stream and return them as a list
