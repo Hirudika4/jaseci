@@ -114,7 +114,6 @@ obj ModelPool(BaseLLM) {
         _primary_model_name: str = "pool-model";
 
     def postinit -> None;
-    override def __call__(**kwargs: object) -> ModelPool;
     override def model_call_no_stream(params: dict) -> dict;
     override def model_call_with_stream(params: dict) -> Generator[str, None, None];
     def shutdown -> None;

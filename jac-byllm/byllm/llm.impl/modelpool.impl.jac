@@ -2,12 +2,6 @@
 import from byllm.mtir { MTRuntime }
 import from typing { Generator }
 
-"""Allow pool() call syntax, storing call_params and returning self."""
-impl ModelPool.__call__(**kwargs: object) -> ModelPool {
-    self.call_params = kwargs;
-    return self;
-}
-
 """Initialize the ModelPool by building a LiteLLM Router in-process.
 
 Constructs the router model list from the provided BaseLLM models, then
