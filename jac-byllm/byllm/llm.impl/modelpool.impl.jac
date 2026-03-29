@@ -85,13 +85,14 @@ impl ModelPool.model_call_no_stream(params: dict) -> dict {
     }
     # cost-based-routing requires acompletion() — its deployment selection
     # only runs on the async path (async_filter_deployments).
+    response: dict;
     if self.strategy == "cost-based-routing" {
         import asyncio;
-        response = asyncio.run(self._router.acompletion(**params));
+        response = asyncio.run(self._router.acompletion(**params));  # type: ignore
     } else {
-        response = self._router.completion(**params);
+        response = self._router.completion(**params);  # type: ignore
     }
-    return response.model_dump();
+    return response;
 }
 
 """Make a streaming model call via the LiteLLM Router."""
