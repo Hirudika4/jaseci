@@ -107,9 +107,9 @@ Strategies: 'fallback' (ordered), 'simple-shuffle' (round-robin),
 obj ModelPool(BaseLLM) {
     has model_name: str = "pool-model",
         models: list[BaseLLM] = [],
-        strategy: str = "fallback",
-        num_retries: int = 1,
-        timeout: float = 60.0,
+        strategy: str | None = None,
+        num_retries: int | None = None,
+        timeout: float | None = None,
         _router: object = None,
         _primary_model_name: str = "pool-model";
 

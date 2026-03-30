@@ -15,6 +15,12 @@ impl ModelPool.postinit -> None {
     if len(self.models) == 0 {
         raise ValueError("ModelPool requires at least one model.");
     }
+    # Apply jac.toml [plugins.byllm.fallback] defaults for any field the user did not set.
+    # None sentinels in the has-fields distinguish "user supplied" from "default".
+    _fallback_cfg = _byllm_config.get_fallback_config();
+    if self.strategy is None { self.strategy = _fallback_cfg.get('strategy', 'fallback'); }
+    if self.num_retries is None { self.num_retries = _fallback_cfg.get('num_retries', 1); }
+    if self.timeout is None { self.timeout = _fallback_cfg.get('timeout', 60.0); }
     is_fallback = self.strategy == "fallback";
     model_list: list = [];
     fallback_names: list = [];

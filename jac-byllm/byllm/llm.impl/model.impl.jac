@@ -78,7 +78,6 @@ impl Model.model_call_no_stream(params: dict) -> dict {
         } elif self.proxy {
             client = OpenAI(base_url=self.api_base, api_key=self.api_key or None);
             response = client.chat.completions.create(**params);
-            response = response.model_dump();
         } else {
             response = litellm.completion(api_key=self.api_key or None, **params);
         }
