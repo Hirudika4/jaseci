@@ -110,13 +110,11 @@ obj ModelPool(BaseLLM) {
         strategy: str | None = None,
         num_retries: int | None = None,
         timeout: float | None = None,
-        _router: object = None,
-        _primary_model_name: str = "pool-model";
+        _router: object = None;
 
     def postinit -> None;
     override def model_call_no_stream(params: dict) -> dict;
     override def model_call_with_stream(params: dict) -> Generator[str, None, None];
-    def shutdown -> None;
 }
 
 """Primary LLM connector that abstracts LiteLLM functionality
