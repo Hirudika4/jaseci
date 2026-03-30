@@ -1,6 +1,8 @@
 """ModelPool implementation — uses LiteLLM Router for in-process fallback and load-balancing."""
 import from byllm.mtir { MTRuntime }
 import from typing { Generator }
+import concurrent.futures;
+import asyncio;
 
 """Initialize the ModelPool by building a LiteLLM Router in-process.
 
@@ -82,33 +84,43 @@ impl ModelPool.postinit -> None {
 
 The router receives the same model alias used at init time ("pool-primary"
 or "pool-model") and handles fallback / load-balancing transparently.
+
+For most strategies, router.completion() works synchronously.
+For cost-based-routing, the sync get_available_deployment() has no handler
+for that strategy, so we must use acompletion(). To remain safe inside
+frameworks that already have a running event loop (FastAPI, Jupyter, etc.),
+we run acompletion() via a ThreadPoolExecutor so asyncio.run() always gets
+a fresh event loop in a dedicated thread.
 """
 impl ModelPool.model_call_no_stream(params: dict) -> dict {
     if self._router is None {
         raise RuntimeError("ModelPool router not initialized.");
     }
-    # cost-based-routing requires acompletion() — its deployment selection
-    # only runs on the async path (async_filter_deployments).
     response: dict;
     if self.strategy == "cost-based-routing" {
-        import asyncio;
-        response = asyncio.run(self._router.acompletion(**params));  # type: ignore
+        
+        coro = self._router.acompletion(**params);  # type: ignore
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool {
+            response = pool.submit(asyncio.run, coro).result();  # type: ignore
+        }
     } else {
         response = self._router.completion(**params);  # type: ignore
     }
     return response;
 }
 
-"""Make a streaming model call via the LiteLLM Router."""
+"""Make a streaming model call via the LiteLLM Router.
+
+For cost-based-routing, acompletion(stream=True) is used and chunks are
+collected synchronously via a ThreadPoolExecutor (same reasoning as
+model_call_no_stream). All other strategies use router.completion(stream=True).
+"""
 impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None] {
     if self._router is None {
         raise RuntimeError("ModelPool router not initialized.");
     }
-    # cost-based-routing requires acompletion() on the async path.
-    # Collect chunks from the async stream and return them as a list
-    # so the sync caller can iterate normally.
     if self.strategy == "cost-based-routing" {
-        import asyncio;
+        
         async def _collect_stream -> list {
             result = await self._router.acompletion(stream=True, **params);
             chunks = [];
@@ -117,10 +129,11 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
             }
             return chunks;
         }
-        return asyncio.run(_collect_stream());
-    } else {
-        return self._router.completion(stream=True, **params);
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool {
+            return pool.submit(asyncio.run, _collect_stream()).result();  # type: ignore
+        }
     }
+    return self._router.completion(stream=True, **params);  # type: ignore
 }
 
 """Release the LiteLLM Router (no-op cleanup — nothing to terminate)."""
