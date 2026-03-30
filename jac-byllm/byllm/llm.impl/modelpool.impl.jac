@@ -98,7 +98,7 @@ impl ModelPool.model_call_no_stream(params: dict) -> dict {
     }
     response: dict;
     if self.strategy == "cost-based-routing" {
-        
+
         coro = self._router.acompletion(**params);  # type: ignore
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool {
             response = pool.submit(asyncio.run, coro).result();  # type: ignore
@@ -120,7 +120,7 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
         raise RuntimeError("ModelPool router not initialized.");
     }
     if self.strategy == "cost-based-routing" {
-        
+
         async def _collect_stream -> list {
             result = await self._router.acompletion(stream=True, **params);
             chunks = [];
