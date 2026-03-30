@@ -1,8 +1,9 @@
 """Test ModelPool cost-based-routing with LiteLLM Router.
 
 LiteLLM Router's cost-based-routing uses the async acompletion() path
-internally. ModelPool bridges this with asyncio.run(router.acompletion(...)).
-Verifies the full async dispatch pipeline works end-to-end.
+internally. ModelPool bridges this by running acompletion() in a
+ThreadPoolExecutor so it is safe even inside frameworks with an existing
+event loop. Verifies the full async dispatch pipeline works end-to-end.
 """
 import from byllm.lib { MockLLM, ModelPool }
 import asyncio;

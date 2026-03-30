@@ -100,7 +100,7 @@ obj MockLLM(BaseLLM) {
 
 """Pool of LLM models with fallback and load-balancing via LiteLLM Router.
 
-Strategies: 'fallback' (ordered), 'simple-shuffle' (round-robin),
+Strategies: 'fallback' (ordered), 'simple-shuffle' (random pick per call),
 'cost-based-routing' (cheapest first), 'latency-based-routing' (fastest first),
 'least-busy' (least concurrent load), 'usage-based-routing' (least used first).
 """

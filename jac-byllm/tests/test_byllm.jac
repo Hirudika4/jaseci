@@ -1048,7 +1048,7 @@ test "model pool router all fail" {
 
 """Test ModelPool cost-based-routing uses the async path (acompletion).
 LiteLLM Router only supports cost-based-routing via acompletion(); ModelPool
-bridges this with asyncio.run()."""
+bridges this via ThreadPoolExecutor to stay safe in async frameworks."""
 test "model pool router cost based" {
     captured_output = io.StringIO();
     sys.stdout = captured_output;
