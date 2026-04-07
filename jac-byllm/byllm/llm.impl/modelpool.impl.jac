@@ -107,6 +107,10 @@ impl ModelPool.model_call_no_stream(params: dict) -> dict {
 
 cost-based-routing uses acompletion() via ThreadPoolExecutor for the same
 reason as model_call_no_stream. All other strategies use router.completion().
+
+For fallback strategy, we call Router._completion() per model with
+fallbacks=[] to work around a recursive infinite loop in the Router's
+stream_with_fallbacks().
 """
 impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None] {
     if self.strategy == "cost-based-routing" {
@@ -122,6 +126,40 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
             return pool.submit(asyncio.run, _collect_stream()).result();  # type: ignore
 
         }
+    }
+    # Fallback strategy: call Router._completion() per model with fallbacks=[]
+    # to prevent the recursive stream_with_fallbacks infinite loop.
+    if self.strategy == "fallback" {
+        model_names: list = ["pool-primary"];
+        for i in range(1, len(self.models)) {
+            model_names.append(f"pool-fallback-{i}");
+        }
+        router = self._router;
+        def _fallback_gen() -> Generator {
+            for (idx, name) in enumerate(model_names) {
+                try {
+                    call_params: dict = dict(params);
+                    call_params.pop("model", None);
+                    messages: list = call_params.pop("messages", []);
+                    response = router._completion(
+                        model=name,
+                        messages=messages,
+                        stream=True,
+                        fallbacks=[],
+                        **call_params
+                    );
+                    for chunk in response {
+                        yield chunk;
+                    }
+                    return;
+                } except Exception {
+                    if idx >= len(model_names) - 1 {
+                        raise;
+                    }
+                }
+            }
+        }
+        return _fallback_gen();
     }
     return self._router.completion(stream=True, **params);  # type: ignore
 
