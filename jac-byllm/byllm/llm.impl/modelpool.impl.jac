@@ -152,7 +152,8 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
                         yield chunk;
                     }
                     return;
-                } except Exception {
+                } except Exception as exc {
+                    logger.warning(f"ModelPool streaming fallback: {name} failed — {exc}");
                     if idx >= len(model_names) - 1 {
                         raise;
                     }
