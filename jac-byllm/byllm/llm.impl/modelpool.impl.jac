@@ -137,6 +137,7 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
         router = self._router;
         def _fallback_gen -> Generator {
             for (idx, name) in enumerate(model_names) {
+                yielded: bool = False;
                 try {
                     call_params: dict = dict(params);
                     call_params.pop("model", None);
@@ -149,12 +150,16 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
                         **call_params
                     );
                     for chunk in response {
+                        yielded = True;
                         yield chunk;
                     }
                     return;
                 } except Exception as exc {
                     logger.warning(f"ModelPool streaming fallback: {name} failed — {exc}");
-                    if idx >= len(model_names) - 1 {
+                    # If any chunks were already sent to the caller, re-raise.
+                    # Falling back now would concatenate a partial response from
+                    # this model with a full response from the next — corrupted output.
+                    if yielded or idx >= len(model_names) - 1 {
                         raise;
                     }
                 }
