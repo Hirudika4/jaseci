@@ -135,7 +135,7 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
             model_names.append(f"pool-fallback-{i}");
         }
         router = self._router;
-        def _fallback_gen() -> Generator {
+        def _fallback_gen -> Generator {
             for (idx, name) in enumerate(model_names) {
                 try {
                     call_params: dict = dict(params);
