@@ -156,7 +156,9 @@ impl ModelPool.model_call_with_stream(params: dict) -> Generator[str, None, None
                     }
                     return;
                 } except Exception as exc {
-                    logger.warning(f"ModelPool streaming fallback: {name} failed — {exc}");
+                    logger.warning(
+                        f"ModelPool streaming fallback: {name} failed — {exc}"
+                    );
                     # If any chunks were already sent to the caller, re-raise.
                     # Falling back now would concatenate a partial response from
                     # this model with a full response from the next — corrupted output.
