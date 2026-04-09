@@ -1090,4 +1090,9 @@ test "model pool streaming fallback" {
     assert "primary_tried:True" in stdout_value;
     assert "fallback_tried:True" in stdout_value;
     assert "order_correct:True" in stdout_value;
+    # Scenario B: mid-stream failure — exception must propagate, no fallback
+    assert "mid_raised:True" in stdout_value;
+    assert "mid_partial_received:True" in stdout_value;
+    assert "mid_fallback_not_tried:True" in stdout_value;
+    assert "mid_should_not_appear:True" in stdout_value;
 }
