@@ -74,7 +74,9 @@ impl TypeCheckPass.exit_return_stmt(self: TypeCheckPass, nd: uni.ReturnStmt) -> 
         return;
     }
 
-    returning_type = self.evaluator._convert_to_instance(self.evaluator.get_none_type());
+    returning_type = self.evaluator._convert_to_instance(
+        self.evaluator.get_none_type()
+    );
     if nd.expr {
         returning_type = self.evaluator.get_type_of_expression(
             nd.expr, expected_type=return_type
@@ -135,8 +137,14 @@ impl TypeCheckPass.exit_assignment(self: TypeCheckPass, nd: uni.Assignment) -> N
         # variable's declared type determines what can be assigned to it.
         if isinstance(target, uni.Name) and target.sym {
             left_type = self.evaluator.get_type_of_symbol(target.sym);
-            # Cache the type on the Name node for hover info
-            target.type = left_type;
+            # `target.type` is the hover cache — show the post-write type
+            # for re-assignments, declared type otherwise. `left_type`
+            # stays declared for the compat check and bare-generic warnings.
+            if hover_type := self.evaluator._get_type_of_lhs_assignment(target) {
+                target.type = self.evaluator._convert_to_instance(hover_type);
+            } else {
+                target.type = left_type;
+            }
             # Warn on bare generic type annotations (e.g. x: list = [])
             if (
                 nd.type_tag
@@ -180,8 +188,7 @@ impl TypeCheckPass.exit_assignment(self: TypeCheckPass, nd: uni.Assignment) -> N
                     and declared_type.shared
                     and declared_type.shared.type_params
                     and (
-                        not declared_type.private
-                        or not declared_type.private.type_args
+                        not declared_type.private or not declared_type.private.type_args
                     )
                 ) {
                     self.emit(
@@ -207,9 +214,26 @@ impl TypeCheckPass.exit_assignment(self: TypeCheckPass, nd: uni.Assignment) -> N
                 # for the assignment check instead of the narrowed type.
                 if isinstance(target, uni.AtomTrailer) and target.is_attr {
                     if isinstance(target.right, uni.Name) and target.right.sym {
-                        declared = self.evaluator.get_type_of_symbol(target.right.sym);
-                        if declared {
-                            left_type = declared;
+                        import from jaclang.compiler.type_system.type_utils {
+                            PropertyWriteKind
+                        }
+                        target_sym = target.right.sym;
+                        prop_result = self.evaluator.get_property_write_type(
+                            target_sym
+                        );
+                        if prop_result.kind == PropertyWriteKind.WRITABLE {
+                            left_type = prop_result.write_type;
+                        } elif prop_result.kind == PropertyWriteKind.READ_ONLY {
+                            self.emit(
+                                E1005, node_override=target, name=target.right.value
+                            );
+                            return;
+                        } else {
+                            # NOT_PROPERTY — use the declared symbol type.
+                            declared = self.evaluator.get_type_of_symbol(target_sym);
+                            if declared {
+                                left_type = declared;
+                            }
                         }
                     }
                 }
@@ -880,8 +904,7 @@ impl TypeCheckPass.exit_visit_stmt(self: TypeCheckPass, nd: uni.VisitStmt) -> No
     target_type = self.evaluator.get_type_of_expression(nd.target);
     # Validate the visit target is a node (or unknown/any which we can't check)
     if (
-        not isinstance(target_type, types.UnknownType)
-        and not target_type.is_any_type()
+        not isinstance(target_type, types.UnknownType) and not target_type.is_any_type()
     ) {
         is_valid = False;
         if isinstance(target_type, types.ClassType) {
@@ -983,7 +1006,8 @@ impl TypeCheckPass.exit_sub_tag(self: TypeCheckPass, nd: uni.SubTag[uni.T]) -> N
     }
 }
 
-"""Evaluate types for each Name in a tuple/list unpacking pattern."""
+"""Evaluate types for each Name leaf in a destructure pattern, recursing
+into nested containers."""
 impl TypeCheckPass._eval_unpacking_names(
     self: TypeCheckPass, container: uni.Expr
 ) -> None {
@@ -991,6 +1015,8 @@ impl TypeCheckPass._eval_unpacking_names(
         for val in container.values {
             if isinstance(val, uni.Name) {
                 self.evaluator.get_type_of_expression(val);
+            } elif isinstance(val, (uni.TupleVal, uni.ListVal)) {
+                self._eval_unpacking_names(val);
             }
         }
     }

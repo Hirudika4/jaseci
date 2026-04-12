@@ -117,9 +117,7 @@ glob E0001 = _err("E0001", Category.SYNTAX, "Expected '{expected}', got '{got}'"
          "E0022", Category.SYNTAX, "Expected ':' or '{{' after lambda parameters"
      ),
      E0023 = _err(
-         "E0023",
-         Category.SYNTAX,
-         "Expected augmented assignment in for...to...by step"
+         "E0023", Category.SYNTAX, "Expected augmented assignment in for...to...by step"
      ),
      E0024 = _err(
          "E0024",
@@ -245,6 +243,11 @@ glob E0001 = _err("E0001", Category.SYNTAX, "Expected '{expected}', got '{got}'"
          "E1004",
          Category.TYPE,
          "Function '{name}' declared return type {ret_type} but may implicitly return None"
+     ),
+     E1005 = _err(
+         "E1005",
+         Category.TYPE,
+         "Cannot assign to read-only property '{name}' (no setter defined)"
      ),
      # Operator errors
      E1010 = _err(
@@ -483,9 +486,7 @@ glob E0001 = _err("E0001", Category.SYNTAX, "Expected '{expected}', got '{got}'"
          "'return' inside a 'finally' block silences exceptions"
      ),
      E2083 = _err(
-         "E2083",
-         Category.SEMANTIC,
-         "'disengage' is only valid inside a walker ability"
+         "E2083", Category.SEMANTIC, "'disengage' is only valid inside a walker ability"
      ),
      # Def-impl match errors
      E2009 = _err(
@@ -520,6 +521,16 @@ glob E0001 = _err("E0001", Category.SYNTAX, "Expected '{expected}', got '{got}'"
          "Explicit 'self' parameter is not allowed in {arch_type} method '{name}' — "
          "'self' is implicit in obj, node, edge, and walker methods."
      ),
+     E2016 = _err(
+         "E2016",
+         Category.SEMANTIC,
+         "Cannot provide implementation for a method that already has a body."
+     ),
+     E2017 = _err(
+         "E2017",
+         Category.SEMANTIC,
+         "Duplicate implementation — an earlier impl already provides the body for this method."
+     ),
      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      # Lint warnings (W3xxx)
      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -547,9 +558,7 @@ glob E0001 = _err("E0001", Category.SYNTAX, "Expected '{expected}', got '{got}'"
          "Empty parentheses can be removed [remove-empty-parens]"
      ),
      W3006 = _warn(
-         "W3006",
-         Category.LINT,
-         "Unnecessary keyword escape on '{name}' [remove-kwesc]"
+         "W3006", Category.LINT, "Unnecessary keyword escape on '{name}' [remove-kwesc]"
      ),
      W3007 = _warn(
          "W3007",
