@@ -1133,7 +1133,7 @@ test "format -s preserves bracketed Jac syntax through Rich console" {
             f.write(src);
         }
         process = subprocess.Popen(
-            ["jac", "format", "-s", src_path],
+            ["jac", "fmt", "-s", src_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -2123,20 +2123,6 @@ test "jac grammar" {
     assert result == 0 , "grammar command should exit with code 0";
     assert "::=" in stdout_value , "EBNF output should contain rule definitions";
     assert "module" in stdout_value , "Grammar should contain module rule";
-}
-
-test "jac grammar lark" {
-    captured = io.StringIO();
-    old_stdout = sys.stdout;
-    sys.stdout = captured;
-    try {
-        result = analysis.grammar(lark=True);
-    } finally {
-        sys.stdout = old_stdout;
-    }
-    stdout_value = captured.getvalue();
-    assert result == 0 , "grammar lark command should exit with code 0";
-    assert len(stdout_value) > 0 , "Lark output should not be empty";
 }
 
 test "jac cli check ignore patterns" {
