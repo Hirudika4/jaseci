@@ -87,6 +87,33 @@ impl PyastGenPass.enter_node(nd: uni.UniNode) -> None {
         return;
     }
     if (
+        isinstance(nd, uni.ContextAwareNode)
+        and (nd.code_context == CodeContext.NATIVE)
+        and ((nd.parent is None) or isinstance(nd.parent, uni.Module))
+        and not isinstance(nd, (uni.Import, uni.Test))
+        and not self._is_native_ext_module()
+    ) {
+        first_native = True;
+        for sib in self.ir_in.body {
+            if sib is nd {
+                break;
+            }
+            if (
+                isinstance(sib, uni.ContextAwareNode)
+                and sib.code_context == CodeContext.NATIVE
+                and not isinstance(sib, uni.Import)
+            ) {
+                first_native = False;
+                break;
+            }
+        }
+        if first_native {
+            self._gen_native_interop_stubs(nd);
+        }
+        self.prune();
+        return;
+    }
+    if (
         isinstance(nd, uni.ClientBlock)
         or (
             isinstance(nd, uni.ContextAwareNode)
@@ -113,6 +140,12 @@ impl PyastGenPass.enter_node(nd: uni.UniNode) -> None {
     super.enter_node(nd);
 }
 
+impl PyastGenPass._is_native_ext_module -> bool {
+    import from jaclang.jac0core.ext_registry { is_native_module }
+    mod_path = self.ir_in.loc.mod_path if (self.ir_in and self.ir_in.loc) else '';
+    return bool(mod_path) and is_native_module(mod_path);
+}
+
 impl PyastGenPass.exit_node(nd: uni.UniNode) -> None {
     if isinstance(nd, (uni.ClientBlock, uni.NativeBlock)) {
         return;
@@ -121,6 +154,15 @@ impl PyastGenPass.exit_node(nd: uni.UniNode) -> None {
         isinstance(nd, uni.ContextAwareNode)
         and (nd.code_context == CodeContext.CLIENT)
         and ((nd.parent is None) or isinstance(nd.parent, uni.Module))
+    ) {
+        return;
+    }
+    if (
+        isinstance(nd, uni.ContextAwareNode)
+        and (nd.code_context == CodeContext.NATIVE)
+        and ((nd.parent is None) or isinstance(nd.parent, uni.Module))
+        and not isinstance(nd, (uni.Import, uni.Test))
+        and not self._is_native_ext_module()
     ) {
         return;
     }
@@ -135,7 +177,7 @@ impl PyastGenPass.exit_node(nd: uni.UniNode) -> None {
     super.exit_node(nd);
 }
 
-impl PyastGenPass._gen_native_interop_stubs(nd: uni.NativeBlock) -> None {
+impl PyastGenPass._gen_native_interop_stubs(nd: uni.UniNode) -> None {
     manifest = self.ir_in.gen.interop_manifest;
     parts: list[str] = [];
     if (manifest and manifest.bindings) {
@@ -161,13 +203,18 @@ impl PyastGenPass._gen_native_interop_stubs(nd: uni.NativeBlock) -> None {
     if parts {
         src = '\n'.join(parts);
         parsed = ast3.parse(src);
+        for stub_node in ast3.walk(parsed) {
+            stub_node.jac_link = [];
+        }
         out.extend(parsed.body);
     }
 
-    for stmt in nd.body {
-        if isinstance(stmt, uni.Test) {
-            self.exit_test(stmt);
-            out.extend(stmt.gen.py_ast);
+    if isinstance(nd, uni.NativeBlock) {
+        for stmt in nd.body {
+            if isinstance(stmt, uni.Test) {
+                self.exit_test(stmt);
+                out.extend(stmt.gen.py_ast);
+            }
         }
     }
     if out {
