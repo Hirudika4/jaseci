@@ -1888,3 +1888,37 @@ test "a tool call cut off mid-arguments is reported to the model (issue #7657)" 
     };
     assert not _byllm_llm_mod._sanitize_tool_calls(blank) , "an argument-less call must not be reported as truncated";
 }
+
+
+"""A tool with required parameters, for exercising the damaged/truncated split."""
+def _writer_tool(file_path: str, content: str) -> str {
+    return f"wrote {len(content)} bytes to {file_path}";
+}
+
+
+test "damaged and truncated calls get the advice that fits the cause (issue #7657)" {
+    tool = Tool(func=_writer_tool);
+
+    def _get_tool(name: str) -> object {
+        return tool;
+    }
+    mt_run = types.SimpleNamespace(get_tool=_get_tool);
+    fn = types.SimpleNamespace(name="_writer_tool", arguments='{"file_path"');
+    call = types.SimpleNamespace(id="call_1", function=fn, type="function");
+
+    # A genuine max_tokens truncation really was too large, so splitting helps.
+    truncated = _byllm_llm_mod._parse_tool_calls(
+        mt_run, [call], `set(["call_1"]), `set()
+    );
+    truncated_msg = str(truncated[0].tool.func());
+    assert "smaller payload" in truncated_msg , f"a truncated call should be told to split: {truncated_msg!r}";
+
+    # A call corrupted in transit was never too large; telling it to split would
+    # make the agent fragment files for no reason.
+    damaged = _byllm_llm_mod._parse_tool_calls(
+        mt_run, [call], `set(), `set(["call_1"])
+    );
+    damaged_msg = str(damaged[0].tool.func());
+    assert "same call again unchanged" in damaged_msg , f"a damaged call should be told to re-send: {damaged_msg!r}";
+    assert "smaller payload" not in damaged_msg , f"a damaged call must not be told to split: {damaged_msg!r}";
+}
