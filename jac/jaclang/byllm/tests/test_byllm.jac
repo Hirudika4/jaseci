@@ -1779,3 +1779,47 @@ test "typed retry only fires for structured output failures" {
         mod.error_llm.seen_prompts
     )}";
 }
+
+
+"""A tool requiring an argument; calling it with none raises inside Tool.__call__,
+exercising the handled tool-failure path (issue #7657)."""
+def _needs_arg_tool(x: int) -> str {
+    return str(x);
+}
+
+
+test "tool call failure logs at WARNING not ERROR (issue #7657)" {
+    import logging;
+
+    # Capture every log record emitted anywhere (the types-module logger
+    # propagates to root) while a tool fails and is handled.
+    buf = io.StringIO();
+    handler = logging.StreamHandler(buf);
+    handler.setLevel(int(logging.DEBUG));
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"));
+    root_logger = logging.getLogger();
+    prev_level = root_logger.level;
+    root_logger.addHandler(handler);
+    root_logger.setLevel(int(logging.DEBUG));
+    try {
+        t = Tool(func=_needs_arg_tool);
+        result = t();  # missing required arg -> raises -> caught -> returned to model
+    } finally {
+        root_logger.removeHandler(handler);
+        root_logger.setLevel(prev_level);
+    }
+    captured = buf.getvalue();
+
+    # (a) the failure is still handed back to the model as a recoverable
+    # observation -- behaviour must be unchanged by the logging fix.
+    assert isinstance(result, str) , f"expected str, got {type(result).__name__}";
+    assert result.startswith("Tool error:") , f"unexpected return: {result!r}";
+
+    # (b) logged once at WARNING, message names the failing tool.
+    assert "WARNING" in captured , f"expected a WARNING record, got: {captured!r}";
+    assert "_needs_arg_tool" in captured , f"WARNING should name the tool, got: {captured!r}";
+
+    # (c) the regression itself: never ERROR level, never a stack trace.
+    assert "ERROR" not in captured , f"handled tool failure must not log at ERROR: {captured!r}";
+    assert "Traceback (most recent call last)" not in captured , f"handled tool failure must not emit a traceback: {captured!r}";
+}

@@ -29,7 +29,7 @@ impl Tool.__call__(*args: list, **kwargs: dict) -> object {
     try {
         return self.func(*args, **kwargs);
     } except Exception as e {
-        logger.exception("Tool execution failed");
+        logger.warning("Tool %s failed: %s", self.get_name(), e);
         return f"Tool error: {e}";
     }
 }
