@@ -35,7 +35,7 @@ impl Tool.__call__(*args: list, **kwargs: dict) -> object {
 }
 
 impl Tool.get_name -> str {
-    return self.func.__name__;
+    return getattr(self.func, "__name__", type(self.func).__name__);
 }
 
 impl Tool.get_func_description(func: Callable) -> str {

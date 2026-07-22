@@ -1823,3 +1823,33 @@ test "tool call failure logs at WARNING not ERROR (issue #7657)" {
     assert "ERROR" not in captured , f"handled tool failure must not log at ERROR: {captured!r}";
     assert "Traceback (most recent call last)" not in captured , f"handled tool failure must not emit a traceback: {captured!r}";
 }
+
+
+"""A tool body that raises at call time; used to exercise the failure path on a
+callable that has no __name__ (issue #7657, PR #7665)."""
+def _raising_tool -> str {
+    raise ValueError("kaboom");
+}
+
+
+test "tool failure on a callable without __name__ is handled, not escaped (issue #7657)" {
+    import functools;
+
+    # functools.partial is callable but has no __name__. Before the fix,
+    # Tool.get_name() read self.func.__name__ directly, so is_finish_tool() (and
+    # the failure log) raised AttributeError on such a callable, and a tool that
+    # threw at runtime escaped as AttributeError instead of reaching the model as
+    # a "Tool error: ..." observation.
+    escaped = None;
+    result = None;
+    try {
+        t = Tool(func=functools.partial(_raising_tool));
+        result = t();  # underlying raises -> caught -> returned, not escaped
+    } except Exception as e {
+        escaped = e;
+    }
+
+    assert escaped is None , f"handled failure escaped as {type(escaped).__name__}: {escaped}";
+    assert isinstance(result, str) , f"expected str, got {type(result).__name__}";
+    assert result.startswith("Tool error:") , f"unexpected return: {result!r}";
+}
