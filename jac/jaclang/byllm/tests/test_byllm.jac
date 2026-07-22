@@ -1870,8 +1870,10 @@ test "a tool call cut off mid-arguments is reported to the model (issue #7657)" 
         "content": ""
     };
     damaged = _byllm_llm_mod._sanitize_tool_calls(message);
-    ids = _byllm_llm_mod._truncated_call_ids(message, "") | damaged;
-    assert "call_1" in ids , f"truncated call must be reported, got {ids!r}";
+    assert "call_1" in damaged , f"damaged call must be reported, got {damaged!r}";
+    # finish_reason is "tool_calls" for a corrupted batch, so the truncation
+    # guard cannot be what reports it.
+    assert not _byllm_llm_mod._truncated_call_ids(message, "tool_calls") , "the truncation guard must not be the thing catching this";
 
     # A tool that genuinely takes no arguments is normal, not damage.
     blank = {

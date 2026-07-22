@@ -1047,7 +1047,10 @@ def _error_tool_call(call_id: str, tool_name: str, reason: str) -> ToolCall {
 
 
 def _parse_tool_calls(
-    mt_run: MTRuntime, tool_calls_list: list, truncated_ids: set | None = None
+    mt_run: MTRuntime,
+    tool_calls_list: list,
+    truncated_ids: set | None = None,
+    damaged_ids: set | None = None
 ) -> list[ToolCall] {
     parsed: list[ToolCall] = [];
     for tool_call in tool_calls_list {
@@ -1066,11 +1069,23 @@ def _parse_tool_calls(
                 _error_tool_call(
                     call_id,
                     tool_name,
-                    "the response was cut off before this tool call finished "
-                    "(usually the max_tokens limit), so its arguments were "
-                    "incomplete and have been discarded. Retry with a smaller "
-                    "payload (if one argument is very large, split the work "
-                    "across multiple calls)"
+                    "the response hit the max_tokens limit before this tool call "
+                    "finished, so its arguments were truncated and discarded. Retry "
+                    "with a smaller payload (if one argument is very large, split the "
+                    "work across multiple calls)"
+                )
+            );
+            continue;
+        }
+        if damaged_ids and call_id in damaged_ids {
+            parsed.append(
+                _error_tool_call(
+                    call_id,
+                    tool_name,
+                    "this tool call's arguments arrived malformed and could not be "
+                    "parsed, so they were discarded. The arguments you chose were "
+                    "not the problem and the payload was not too large: send the "
+                    "same call again unchanged"
                 )
             );
             continue;
@@ -1183,10 +1198,10 @@ impl BaseLLM.dispatch_no_streaming(mt_run: MTRuntime) -> CompletionResult {
         (response.get("choices") or [{}])[0].get("finish_reason") or ""
     );
 
-    truncated_ids = _truncated_call_ids(message, finish_reason) | damaged_ids;
+    truncated_ids = _truncated_call_ids(message, finish_reason);
     tool_calls: list[ToolCall] = [];
     tool_calls_list = (message or {}).get("tool_calls") or [];
-    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids);
+    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids, damaged_ids);
 
     output_value = mt_run.parse_response(output_content)
         if not tool_calls_list
@@ -1335,10 +1350,10 @@ impl BaseLLM.dispatch_streaming_with_tools(
     mt_run.add_message(message);
     output_content: str = message.get("content") or "";
 
-    truncated_ids = _truncated_call_ids(message, finish_reason) | damaged_ids;
+    truncated_ids = _truncated_call_ids(message, finish_reason);
     tool_calls: list[ToolCall] = [];
     tool_calls_list = (message or {}).get("tool_calls") or [];
-    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids);
+    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids, damaged_ids);
     output_value = mt_run.parse_response(output_content)
         if not tool_calls_list
         else output_content;
@@ -1387,10 +1402,10 @@ impl BaseLLM.adispatch_no_streaming(mt_run: MTRuntime) -> CompletionResult {
         (response.get("choices") or [{}])[0].get("finish_reason") or ""
     );
 
-    truncated_ids = _truncated_call_ids(message, finish_reason) | damaged_ids;
+    truncated_ids = _truncated_call_ids(message, finish_reason);
     tool_calls: list[ToolCall] = [];
     tool_calls_list = (message or {}).get("tool_calls") or [];
-    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids);
+    tool_calls = _parse_tool_calls(mt_run, tool_calls_list, truncated_ids, damaged_ids);
     output_value = mt_run.parse_response(output_content)
         if not tool_calls_list
         else output_content;
